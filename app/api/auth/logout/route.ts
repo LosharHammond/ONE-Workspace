@@ -1,0 +1,2 @@
+import {sameOrigin,sessionToken,hash,db,origin,failure,clearSessionCookies} from '../../../server/core';
+export async function POST(req:Request){try{sameOrigin(req);const token=sessionToken(req);if(token)await db().prepare('DELETE FROM sessions WHERE token_hash=?').bind(await hash(token)).run();const headers=new Headers({Location:origin(req),'Cache-Control':'no-store'});for(const c of clearSessionCookies())headers.append('Set-Cookie',c);return new Response(null,{status:303,headers})}catch(e){return failure(e)}}

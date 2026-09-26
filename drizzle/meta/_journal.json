@@ -1,0 +1,62 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1789397768650,
+      "tag": "0000_needy_rachel_grey",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1789415239589,
+      "tag": "0001_mushy_aqueduct",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1789463265134,
+      "tag": "0002_clumsy_slayback",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1789476701215,
+      "tag": "0003_happy_frog_thor",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1790071413108,
+      "tag": "0004_marvelous_the_anarchist",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1790089840453,
+      "tag": "0005_chemical_patch",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1790449400640,
+      "tag": "0006_one_workspace",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1790452842480,
+      "tag": "0007_platform_owner",
+      "breakpoints": true
+    }
+  ]
+}
