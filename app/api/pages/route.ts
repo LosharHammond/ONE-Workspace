@@ -17,7 +17,7 @@ export const GET=route(async(req,u)=>{
  const rows=await all<PageRow>('SELECT * FROM pages WHERE tenant_id=? ORDER BY pinned DESC,updated_at DESC LIMIT 3000',u.tenantId);
  const spaces=(await all<{name:string}>('SELECT name FROM departments WHERE tenant_id=?',u.tenantId)).map(d=>d.name);
  return {pages:rows.filter(p=>canSeePage(u,p)).map(({body,...p})=>({...p,excerpt:body.replace(/[#*_>`[\]()-]/g,'').slice(0,220)})),canCreate:Object.fromEntries(['',...spaces].map(s=>[s,canCreateIn(u,s)]))};
-});
+},{module:'spaces'});
 
 export const POST=route(async(req,u)=>{
  const b=await readBody(req,300000);const action=String(b.action||'save');
@@ -53,7 +53,7 @@ export const POST=route(async(req,u)=>{
   return {ok:true};
  }
  throw new HttpError(400,'Unknown action.');
-});
+},{module:'spaces'});
 
 // Announcements reach everyone in the space (or the whole company) in-app; email is left to the digest.
 async function announce(u:Member,p:{id:string,title:string,department:string},req:Request){

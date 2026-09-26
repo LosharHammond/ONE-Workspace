@@ -1,7 +1,9 @@
 import {env} from 'cloudflare:workers';
 import {hasAction,canActOn} from '../../access-policy';
 import {route,readBody,HttpError,all,first,stmt,batch,uid,now,str,oneOf,idOf,auditStatement} from '../../server/core';
-import {canSeeFile,canEditFile,type FileRow} from '../../server/entities';
+import {canSeeFile,canEditFile,visibleEntity,type FileRow} from '../../server/entities';
+import {tenantOf,tenantSettings} from '../../server/core';
+import {planLimits} from '../../modules';
 import type {Member} from '../../server/policy';
 
 const MAX=25*1024*1024;
@@ -9,7 +11,8 @@ const types:Record<string,string>={pdf:'application/pdf',doc:'application/msword
 const inline=new Set(['application/pdf','image/png','image/jpeg','image/gif','image/webp','text/plain','video/mp4','audio/mpeg']);
 type Folder={id:string,parent_id:string|null,name:string,department:string,visibility:string,created_by:string,created_at:string};
 const canSeeFolder=(u:Member,f:Folder)=>canSeeFile(u,{...f,uploaded_by:f.created_by} as unknown as FileRow);
-async function loadFile(u:Member,id:string){const f=await first<FileRow>('SELECT * FROM files WHERE id=? AND tenant_id=?',id,u.tenantId);if(!f||!canSeeFile(u,f))throw new HttpError(404,'File not found.');return f}
+// Attachments (entity_type set) follow the visibility of the record they are attached to.
+async function loadFile(u:Member,id:string){const f=await first<FileRow&{entity_type:string|null,entity_id:string|null}>('SELECT * FROM files WHERE id=? AND tenant_id=?',id,u.tenantId);if(f?.entity_type&&f.entity_id){await visibleEntity(u,f.entity_type,f.entity_id);return f}if(!f||!canSeeFile(u,f))throw new HttpError(404,'File not found.');return f}
 
 export const GET=route(async(req,u)=>{
  if(!hasAction(u,'documents'))throw new HttpError(403,'Files are not available to your account.');
@@ -27,9 +30,9 @@ export const GET=route(async(req,u)=>{
  }
  const id=url.searchParams.get('id');
  if(id){const f=await loadFile(u,idOf(id,'File'));const versions=await all('SELECT version,bytes,uploaded_by AS uploadedBy,created_at AS createdAt FROM file_versions WHERE tenant_id=? AND file_id=? ORDER BY version DESC',u.tenantId,f.id);return {file:f,versions,canEdit:canEditFile(u,f)}}
- const [folders,files]=await Promise.all([all<Folder>('SELECT * FROM folders WHERE tenant_id=? ORDER BY name',u.tenantId),all<FileRow>('SELECT id,folder_id,name,mime,bytes,department,visibility,tags,description,version,uploaded_by,created_at,updated_at,file_key FROM files WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 5000',u.tenantId)]);
+ const [folders,files]=await Promise.all([all<Folder>('SELECT * FROM folders WHERE tenant_id=? ORDER BY name',u.tenantId),all<FileRow>('SELECT id,folder_id,name,mime,bytes,department,visibility,tags,description,version,uploaded_by,created_at,updated_at,file_key FROM files WHERE tenant_id=? AND entity_type IS NULL ORDER BY updated_at DESC LIMIT 5000',u.tenantId)]);
  return {folders:folders.filter(f=>canSeeFolder(u,f)),files:files.filter(f=>canSeeFile(u,f)).map(({file_key,...f})=>f),canUpload:hasAction(u,'documents','upload')};
-});
+},{module:'files'});
 
 export const POST=route(async(req,u)=>{
  if((req.headers.get('Content-Type')||'').startsWith('multipart/form-data'))return upload(req,u);
@@ -62,7 +65,7 @@ export const POST=route(async(req,u)=>{
   return {ok:true};
  }
  throw new HttpError(400,'Unknown action.');
-});
+},{module:'files'});
 
 async function upload(req:Request,u:Member){
  if(!hasAction(u,'documents','upload'))throw new HttpError(403,'Uploading files is not part of your role.');
@@ -72,6 +75,13 @@ async function upload(req:Request,u:Member){
  if(!(file instanceof File)||!file.size||file.size>MAX)throw new HttpError(400,'Choose a file of up to 25 MB.');
  const ext=(file.name.split('.').pop()||'').toLowerCase();const mime=types[ext];
  if(!mime)throw new HttpError(400,'Upload PDF, Office, CSV, text, image, ZIP, MP3 or MP4 files.');
+ // Workspace storage limit (plan default or Platform Owner override).
+ const t=await tenantOf(u);const limits={...(planLimits[t.plan]||planLimits.business),...(tenantSettings(t).limits as object||{})} as {maxStorageMb:number};
+ const used=await first<{b:number}>('SELECT coalesce(sum(bytes),0) AS b FROM files WHERE tenant_id=?',u.tenantId);
+ if((used?.b||0)+file.size>limits.maxStorageMb*1048576)throw new HttpError(413,`This workspace has reached its ${limits.maxStorageMb.toLocaleString()} MB storage limit.`);
+ const entityType=typeof fd.get('entityType')==='string'&&fd.get('entityType')?oneOf(fd.get('entityType'),['ticket','asset','PR','PO','page','work_order'] as const,'attachment target'):null;
+ const entityId=entityType?idOf(fd.get('entityId'),'Record'):null;
+ if(entityType&&entityId)await visibleEntity(u,entityType,entityId);
  const replace=fd.get('replaceId');
  if(typeof replace==='string'&&replace){
   const f=await loadFile(u,idOf(replace,'File'));if(!canEditFile(u,f))throw new HttpError(403,'You cannot add versions to this file.');
@@ -86,7 +96,7 @@ async function upload(req:Request,u:Member){
  const department=str(fd.get('department'),'Department',160,false)||folder?.department||u.department;
  const visibility=oneOf(fd.get('visibility')||folder?.visibility||'company',['company','department','private'] as const,'visibility');
  await env.BUCKET.put(key,file.stream(),{httpMetadata:{contentType:mime}});
- try{await batch([stmt('INSERT INTO files(id,tenant_id,folder_id,name,mime,bytes,file_key,department,visibility,tags,description,version,uploaded_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?,?,?)',id,u.tenantId,folderId,file.name.slice(0,200),mime,file.size,key,department,visibility,str(fd.get('tags'),'Tags',300,false),str(fd.get('description'),'Description',1000,false),u.id,now(),now()),auditStatement(u,'File uploaded',id,department,null,{name:file.name,bytes:file.size})])}
+ try{await batch([stmt('INSERT INTO files(id,tenant_id,folder_id,name,mime,bytes,file_key,department,visibility,tags,description,version,uploaded_by,created_at,updated_at,entity_type,entity_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,1,?,?,?,?,?)',id,u.tenantId,entityType?null:folderId,file.name.slice(0,200),mime,file.size,key,department,visibility,str(fd.get('tags'),'Tags',300,false),str(fd.get('description'),'Description',1000,false),u.id,now(),now(),entityType,entityId),auditStatement(u,'File uploaded',id,department,null,{name:file.name,bytes:file.size})])}
  catch(e){await env.BUCKET.delete(key).catch(()=>{});throw e}
  return {id};
 }

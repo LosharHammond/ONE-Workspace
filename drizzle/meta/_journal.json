@@ -57,6 +57,13 @@
       "when": 1790452842480,
       "tag": "0007_platform_owner",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1790461277784,
+      "tag": "0008_saas_platform",
+      "breakpoints": true
     }
   ]
 }

@@ -12,6 +12,10 @@ import Files from './files';
 import Spaces from './spaces';
 import Operations from './ops';
 import Admin from './admin';
+import Platform from './platform';
+import Inventory from './inventory';
+import Maintenance from './maintenance';
+import Reports from './reports';
 
 type View={id:string,label:string,icon:string,count?:number,hidden?:boolean,section?:string};
 type AppDef={id:string,label:string,icon:string,tone:string,show:boolean,views:View[],render:(parts:string[])=>ReactNode};
@@ -21,6 +25,8 @@ export default function OneWorkspace(){
  const load=useCallback(async()=>{try{const d=await api<any>('/api/session');setBoot(d);if(d.mode==='live')setS(d)}catch(e){setBoot({mode:'error',user:{name:(e as Error).message,email:''}})}},[]);
  useEffect(()=>{load()},[load]);
  useEffect(()=>{const t=pref<string>('theme','system');document.documentElement.dataset.theme=t==='system'?'':t},[]);
+ const route=useRoute();
+ if(route.app==='activate'&&route.parts[0])return <Activate token={route.parts[0]}/>;
  if(!boot)return <Splash/>;
  if(boot.mode==='signed-out'||boot.mode==='error')return <SignIn ready={boot.ready!==false} error={boot.mode==='error'?boot.user?.name:undefined} onDone={load}/>;
  if(boot.mode==='must-change')return <SignIn changing name={boot.user?.name} onDone={load}/>;
@@ -32,33 +38,56 @@ function signOut(){const f=document.createElement('form');f.method='post';f.acti
 function Splash(){return <div className="splash"><Logo size={44}/><span className="spin"/></div>}
 export function Logo({size=34}:{size?:number}){return <span className="logo" style={{width:size,height:size}} aria-hidden><svg viewBox="0 0 40 40" width={size} height={size}><rect x="2" y="2" width="36" height="36" rx="11" fill="var(--brand)"/><rect x="9" y="9" width="10" height="10" rx="3.2" fill="#fff" opacity=".95"/><rect x="21" y="9" width="10" height="10" rx="3.2" fill="#fff" opacity=".55"/><rect x="9" y="21" width="10" height="10" rx="3.2" fill="#fff" opacity=".55"/><rect x="21" y="21" width="10" height="10" rx="5" fill="#fff" opacity=".95"/></svg></span>}
 
-function SignIn({changing,name,onDone,ready=true,error}:{changing?:boolean,name?:string,onDone:()=>void,ready?:boolean,error?:string}){
- const [claim,setClaim]=useState(false),[token,setToken]=useState(''),[login,setLogin]=useState(''),[password,setPassword]=useState(''),[next,setNext]=useState(''),[confirm,setConfirm]=useState(''),[msg,setMsg]=useState(error||''),[busy,setBusy]=useState(false);
- async function submit(e:React.FormEvent){e.preventDefault();setMsg('');if((changing||claim)&&next!==confirm){setMsg('The new passwords do not match.');return}setBusy(true);try{if(claim){await api('/api/platform/claim',{token,password:next});setClaim(false);setLogin('losharhammond@gmail.com');setPassword('');setNext('');setConfirm('');setMsg('Owner password set. Sign in now.');return}await api(changing?'/api/auth/password':'/api/auth/login',changing?{current:password,password:next}:{login,password});onDone()}catch(e){setMsg((e as Error).message)}finally{setBusy(false)}}
- return <div className="auth">
+function AuthLayout({children}:{children:ReactNode}){return <div className="auth">
   <section className="auth-art">
    <div className="auth-brand"><Logo size={40}/><span>One Workspace</span></div>
    <div className="auth-copy"><h1>Your company,<br/>running as one.</h1><p>People, assets, tickets, purchasing, files and department knowledge — one calm operating system for the whole team.</p></div>
    <div className="auth-tiles">{[['Ticket','TKT-2026-0142','In progress','orange'],['Requisition','PR-2026-0088','Approved','green'],['Asset','AST-00417','Assigned','teal'],['Space','Finance · Month-end close','Published','pink']].map(([k,t,st,tone],i)=><div key={t} className="auth-tile" style={{animationDelay:`${i*.12}s`}}><span className={`tile-dot tone-${tone}`}/><div><small>{k}</small><b>{t}</b></div><em>{st}</em></div>)}</div>
    <div className="auth-orb a"/><div className="auth-orb b"/>
   </section>
-  <section className="auth-form">
-   <form onSubmit={submit} className="auth-card">
-    <h2>{claim?'Platform owner setup':changing?`Welcome, ${name?.split(' ')[0]||''}`:'Sign in'}</h2>
-    <p className="muted">{claim?'One-time setup for the One Workspace operator account. Enter the setup token from the site secrets.':changing?'Set a personal password to finish setting up your account.':'Use your work email or username.'}</p>
+  <section className="auth-form">{children}</section>
+ </div>}
+
+function SignIn({changing,name,onDone,ready=true,error}:{changing?:boolean,name?:string,onDone:()=>void,ready?:boolean,error?:string}){
+ const [mode,setMode]=useState<'signin'|'claim'|'forgot'>('signin');
+ const [token,setToken]=useState(''),[login,setLogin]=useState(''),[password,setPassword]=useState(''),[next,setNext]=useState(''),[confirm,setConfirm]=useState(''),[msg,setMsg]=useState<{text:string,ok?:boolean}|null>(error?{text:error}:null),[busy,setBusy]=useState(false);
+ const claim=mode==='claim',forgot=mode==='forgot';
+ async function submit(e:React.FormEvent){e.preventDefault();setMsg(null);if((changing||claim)&&next!==confirm){setMsg({text:'The new passwords do not match.'});return}setBusy(true);try{
+  if(forgot){const r=await api<{message:string}>('/api/auth/forgot',{email:login});setMsg({text:r.message,ok:true});return}
+  if(claim){await api('/api/platform/claim',{token,password:next});setMode('signin');setToken('');setLogin('');setPassword('');setNext('');setConfirm('');setMsg({text:'Platform Owner password set. Sign in now.',ok:true});return}
+  await api(changing?'/api/auth/password':'/api/auth/login',changing?{current:password,password:next}:{login,password});onDone()}catch(e){setMsg({text:(e as Error).message})}finally{setBusy(false)}}
+ return <AuthLayout><form onSubmit={submit} className="auth-card">
+    <h2>{claim?'Platform Owner setup':forgot?'Reset your password':changing?`Welcome, ${name?.split(' ')[0]||''}`:'Sign in'}</h2>
+    <p className="muted">{claim?'One-time setup for the Platform Owner account. Enter the setup token from the server secrets.':forgot?'Enter your work email. If it has an account, we will email a reset link.':changing?'Replace your temporary password with a personal one to continue.':'Use your work email or username.'}</p>
     {!ready&&<div className="note note-warn"><Icon name="TriangleAlert" size={16}/><span>The workspace database is not connected in this environment.</span></div>}
     {claim&&<label className="field"><span className="field-label">Setup token</span><input autoFocus required type="password" autoComplete="off" value={token} onChange={e=>setToken(e.target.value)}/></label>}
-    {!changing&&!claim&&<label className="field"><span className="field-label">Email or username</span><input autoFocus required autoComplete="username" value={login} onChange={e=>setLogin(e.target.value)}/></label>}
-    {!claim&&<label className="field"><span className="field-label">{changing?'Current (temporary) password':'Password'}</span><input required type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} autoFocus={changing}/></label>}
+    {!changing&&!claim&&<label className="field"><span className="field-label">{forgot?'Work email':'Email or username'}</span><input autoFocus required type={forgot?'email':'text'} autoComplete="username" value={login} onChange={e=>setLogin(e.target.value)}/></label>}
+    {!claim&&!forgot&&<label className="field"><span className="field-label">{changing?'Current (temporary) password':'Password'}</span><input required type="password" autoComplete="current-password" value={password} onChange={e=>setPassword(e.target.value)} autoFocus={changing}/></label>}
     {(changing||claim)&&<><label className="field"><span className="field-label">New password</span><input required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={next} onChange={e=>setNext(e.target.value)}/><small className="field-hint">At least 12 characters. A short sentence works well.</small></label><label className="field"><span className="field-label">Confirm new password</span><input required type="password" autoComplete="new-password" value={confirm} onChange={e=>setConfirm(e.target.value)}/></label></>}
-    {msg&&<div className={`note ${msg.startsWith('Owner password set')?'note-ok':'note-error'}`} role="alert"><Icon name="CircleAlert" size={16}/><span>{msg}</span></div>}
-    <Btn type="submit" variant="primary" busy={busy} className="btn-block">{claim?'Set owner password':changing?'Save password & continue':'Sign in'}</Btn>
+    {msg&&<div className={`note ${msg.ok?'note-ok':'note-error'}`} role="alert"><Icon name={msg.ok?'CircleCheck':'CircleAlert'} size={16}/><span>{msg.text}</span></div>}
+    <Btn type="submit" variant="primary" busy={busy} className="btn-block">{claim?'Set Platform Owner password':forgot?'Send reset link':changing?'Save password & continue':'Sign in'}</Btn>
     {changing&&<button type="button" className="link small" onClick={signOut}>Sign out</button>}
-    {!changing&&<button type="button" className="link small" onClick={()=>{setClaim(!claim);setMsg('')}}>{claim?'Back to sign in':'Platform owner first-time setup'}</button>}
-    <p className="auth-foot">Accounts are created by your company administrator.</p>
-   </form>
-  </section>
- </div>;
+    {!changing&&<div className="auth-links">{mode!=='signin'?<button type="button" className="link small" onClick={()=>{setMode('signin');setMsg(null)}}>Back to sign in</button>:<><button type="button" className="link small" onClick={()=>{setMode('forgot');setMsg(null)}}>Forgot password?</button><button type="button" className="link small muted-link" onClick={()=>{setMode('claim');setMsg(null)}}>Platform Owner setup</button></>}</div>}
+    <p className="auth-foot">Accounts are created by invitation from your company administrator.</p>
+   </form></AuthLayout>;
+}
+
+// Invitation / password-reset landing page. The token stays in the URL fragment, so it never reaches server logs.
+function Activate({token}:{token:string}){
+ const [info,setInfo]=useState<{purpose:string,name:string,email:string,workspace:string|null}|null>(null),[err,setErr]=useState(''),[pw,setPw]=useState(''),[pw2,setPw2]=useState(''),[busy,setBusy]=useState(false),[done,setDone]=useState(false);
+ useEffect(()=>{api<any>('/api/auth/activate',{token,check:true}).then(setInfo).catch(e=>setErr((e as Error).message))},[token]);
+ async function submit(e:React.FormEvent){e.preventDefault();if(pw!==pw2){setErr('The passwords do not match.');return}setBusy(true);setErr('');try{await api('/api/auth/activate',{token,password:pw});setDone(true);history.replaceState(null,'','/#/home')}catch(x){setErr((x as Error).message)}finally{setBusy(false)}}
+ return <AuthLayout><form className="auth-card" onSubmit={submit}>
+  {done?<><h2>You're all set</h2><p className="muted">Your password is saved. Sign in with {info?.email}.</p><Btn variant="primary" className="btn-block" onClick={()=>{location.href='/'}}>Go to sign in</Btn></>:
+  !info?<>{err?<><h2>Link not valid</h2><div className="note note-error" role="alert"><Icon name="CircleAlert" size={16}/><span>{err}</span></div><a className="link small" href="/">Back to sign in</a></>:<div className="spin-center"><span className="spin"/></div>}</>:<>
+   <h2>{info.purpose==='invite'?`Join ${info.workspace||'One Workspace'}`:'Choose a new password'}</h2>
+   <p className="muted">{info.purpose==='invite'?`Welcome, ${info.name.split(' ')[0]}. Choose a password to activate ${info.email}.`:`Resetting the password for ${info.email}.`}</p>
+   <label className="field"><span className="field-label">New password</span><input autoFocus required type="password" minLength={12} maxLength={128} autoComplete="new-password" value={pw} onChange={e=>setPw(e.target.value)}/><small className="field-hint">At least 12 characters. This link works once.</small></label>
+   <label className="field"><span className="field-label">Confirm password</span><input required type="password" autoComplete="new-password" value={pw2} onChange={e=>setPw2(e.target.value)}/></label>
+   {err&&<div className="note note-error" role="alert"><Icon name="CircleAlert" size={16}/><span>{err}</span></div>}
+   <Btn type="submit" variant="primary" busy={busy} className="btn-block">{info.purpose==='invite'?'Activate account':'Save new password'}</Btn>
+  </>}
+ </form></AuthLayout>;
 }
 
 function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
@@ -80,19 +109,30 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
  useEffect(()=>{document.documentElement.style.setProperty('--brand',s.tenant.brandColor||'#6D5EF8');document.title=`${s.tenant.name} · One Workspace`},[s.tenant]);
  useEffect(()=>{setMobileNav(false)},[route.app,route.parts.join('/')]);
 
+ // Navigation follows the permission map from the server. Pages of switched-off modules come back as
+ // "none" there, so the module disappears here and its API refuses requests.
+ const owner=s.user.platformRole==='owner';
  const apps:AppDef[]=[
   {id:'home',label:'Home',icon:'House',tone:'violet',show:true,views:[],render:()=> <Home/>},
-  {id:'tickets',label:'Tickets',icon:'LifeBuoy',tone:'orange',show:can('maintenance'),views:[{id:'mine',label:'Assigned to me',icon:'UserCheck',count:s.counts.tickets},{id:'requested',label:'Raised by me',icon:'Send'},{id:'queue',label:'Team queue',icon:'Inbox',hidden:!can('maintenance','update')},{id:'board',label:'Board',icon:'Kanban'},{id:'all',label:'All tickets',icon:'List'}],render:p=><Tickets parts={p}/>},
-  {id:'purchasing',label:'Purchasing',icon:'ShoppingBag',tone:'green',show:can('requests')||can('procurement'),views:[{id:'inbox',label:'Approvals inbox',icon:'Stamp',count:s.counts.approvals},{id:'pr',label:'Requisitions',icon:'ClipboardList',hidden:!can('requests')},{id:'po',label:'Purchase orders',icon:'FileText',hidden:!can('procurement')},{id:'vendors',label:'Vendors',icon:'Store',hidden:!can('suppliers')&&!can('procurement')},{id:'workflows',label:'Approval workflows',icon:'Workflow',hidden:!admin}],render:p=><Purchasing parts={p}/>},
-  {id:'assets',label:'Assets',icon:'Boxes',tone:'teal',show:true,views:[{id:'mine',label:'My assets',icon:'Laptop'},{id:'all',label:'Asset register',icon:'Database',hidden:!can('assets')},{id:'dashboard',label:'Overview',icon:'ChartPie',hidden:!can('assets')}],render:p=><Assets parts={p}/>},
+  {id:'tickets',label:'Tickets',icon:'LifeBuoy',tone:'orange',show:can('maintenance'),views:[{id:'mine',label:'Assigned to me',icon:'UserCheck',count:s.counts.tickets},{id:'requested',label:'Raised by me',icon:'Send'},{id:'department',label:'My department',icon:'Building2'},{id:'queue',label:'Team queue',icon:'Inbox',hidden:!can('maintenance','update')},{id:'board',label:'Board',icon:'Kanban'},{id:'all',label:'All tickets',icon:'List'}],render:p=><Tickets parts={p}/>},
+  {id:'purchasing',label:'Purchasing',icon:'ShoppingBag',tone:'green',show:can('requests')||can('procurement'),views:[{id:'inbox',label:'Approvals inbox',icon:'Stamp',count:s.counts.approvals},{id:'pr',label:'Requisitions',icon:'ClipboardList',hidden:!can('requests')},{id:'po',label:'Purchase orders',icon:'FileText',hidden:!can('procurement')},{id:'vendors',label:'Vendors',icon:'Store',hidden:!can('suppliers')&&!can('procurement')},{id:'budgets',label:'Budgets',icon:'PiggyBank',hidden:!can('budgets')},{id:'workflows',label:'Approval workflows',icon:'Workflow',hidden:!admin}],render:p=><Purchasing parts={p}/>},
+  {id:'assets',label:'Assets',icon:'Boxes',tone:'teal',show:!s.user.permissions.assets||s.tenant.modules.includes('assets'),views:[{id:'mine',label:'My assets',icon:'Laptop'},{id:'all',label:'Asset register',icon:'Database',hidden:!can('assets')},{id:'audits',label:'Asset audits',icon:'ClipboardCheck',hidden:!can('assets')},{id:'dashboard',label:'Overview',icon:'ChartPie',hidden:!can('assets')}],render:p=><Assets parts={p}/>},
+  {id:'inventory',label:'Inventory',icon:'Package',tone:'amber',show:can('inventory')&&s.tenant.modules.includes('inventory'),views:[{id:'items',label:'Stock items',icon:'Package'},{id:'reorder',label:'Reorder list',icon:'TriangleAlert'},{id:'moves',label:'Movements',icon:'ArrowRightLeft'}],render:p=><Inventory parts={p}/>},
+  {id:'maintenance',label:'Maintenance',icon:'Wrench',tone:'indigo',show:can('schedules'),views:[{id:'orders',label:'Work orders',icon:'ClipboardList'},{id:'mine',label:'Assigned to me',icon:'UserCheck'},{id:'plans',label:'Preventive plans',icon:'CalendarClock'}],render:p=><Maintenance parts={p}/>},
   {id:'people',label:'People',icon:'Users',tone:'sky',show:can('people'),views:[{id:'directory',label:'Directory',icon:'Contact'},{id:'org',label:'Org chart',icon:'Network'},{id:'departments',label:'Departments',icon:'Building2'},{id:'locations',label:'Locations',icon:'MapPin',hidden:!can('locations')},{id:'manage',label:'Manage users',icon:'UserCog',hidden:!can('settings','manage_members')}],render:p=><People parts={p}/>},
   {id:'spaces',label:'Spaces',icon:'LibraryBig',tone:'pink',show:can('knowledge'),views:[],render:p=><Spaces parts={p}/>},
   {id:'files',label:'Files',icon:'FolderClosed',tone:'amber',show:can('documents'),views:[],render:p=><Files parts={p}/>},
-  {id:'ops',label:'Operations',icon:'Factory',tone:'slate',show:['inventory','receipts','budgets','it','research'].some(p=>can(p)),views:[{id:'inventory',label:'Inventory',icon:'Package',hidden:!can('inventory')},{id:'receipts',label:'Goods receipts',icon:'Truck',hidden:!can('receipts')},{id:'budgets',label:'Budgets',icon:'PiggyBank',hidden:!can('budgets')},{id:'it',label:'IT & CCTV storage',icon:'HardDrive',hidden:!can('it')},{id:'research',label:'Consumer research',icon:'FlaskConical',hidden:!can('research')}],render:p=><Operations parts={p}/>},
-  {id:'admin',label:'Admin',icon:'Settings2',tone:'gray',show:admin||can('audit')||!!s.user.platformRole,views:[{id:'company',label:'Company settings',icon:'Building',hidden:!admin},{id:'roles',label:'Roles & permissions',icon:'ShieldCheck',hidden:!admin},{id:'overrides',label:'Access overrides',icon:'KeyRound',hidden:!admin},{id:'data',label:'Data hub',icon:'DatabaseZap',hidden:!can('company-data')},{id:'activity',label:'Activity log',icon:'History',hidden:!can('audit')},{id:'platform',label:'Platform console',icon:'Globe',hidden:!s.user.platformRole,section:'Platform'}],render:p=><Admin parts={p}/>},
+  {id:'reports',label:'Reports',icon:'ChartColumn',tone:'blue',show:can('reports'),views:[],render:p=><Reports parts={p}/>},
+  {id:'ops',label:'Operations',icon:'Factory',tone:'slate',show:['it','research'].some(p=>can(p))||(can('receipts')&&admin),views:[{id:'it',label:'IT & CCTV storage',icon:'HardDrive',hidden:!can('it')},{id:'research',label:'Consumer research',icon:'FlaskConical',hidden:!can('research')},{id:'inventory',label:'Imported stock register',icon:'Package',hidden:!can('inventory'),section:'Imported registers'},{id:'receipts',label:'Imported receipts',icon:'Truck',hidden:!can('receipts'),section:'Imported registers'},{id:'budgets',label:'Imported budgets',icon:'PiggyBank',hidden:!can('budgets'),section:'Imported registers'}],render:p=><Operations parts={p}/>},
+  {id:'admin',label:'Admin',icon:'Settings2',tone:'gray',show:admin||can('audit'),views:[{id:'company',label:'Company settings',icon:'Building',hidden:!admin},{id:'roles',label:'Roles & permissions',icon:'ShieldCheck',hidden:!admin},{id:'overrides',label:'Access overrides',icon:'KeyRound',hidden:!admin},{id:'data',label:'Data hub',icon:'DatabaseZap',hidden:!can('company-data')},{id:'activity',label:'Activity log',icon:'History',hidden:!can('audit')},{id:'security',label:'Security log',icon:'ShieldAlert',hidden:!admin}],render:p=><Admin parts={p}/>},
+  // The Platform app exists only for the Platform Owner and is separate from company administration.
+  {id:'platform',label:'Platform',icon:'Globe',tone:'red',show:owner,views:[{id:'workspaces',label:'Workspaces',icon:'Building'},{id:'audit',label:'Platform audit',icon:'ScrollText'}],render:p=><Platform parts={p}/>},
  ];
  const visibleApps=apps.filter(a=>a.show);
  const current=visibleApps.find(a=>a.id===route.app)||visibleApps[0];
+ // First load with no route: go to the role's default landing screen.
+ const landed=useRef(false);
+ useEffect(()=>{if(landed.current)return;landed.current=true;if(!location.hash.replace(/^#\/?/,'')&&s.user.defaultScreen)go(s.user.defaultScreen)},[s.user.defaultScreen]);
  const views=current.views.filter(v=>!v.hidden);
  const activeView=route.parts[0]||views[0]?.id;
 
@@ -104,7 +144,7 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
   if(e.key==='/'){e.preventDefault();setPalette(true);return}
   if(e.key==='?'){setShortcuts(true);return}
   if(e.key==='g'){pendingG.current=Date.now();return}
-  if(Date.now()-pendingG.current<900){const map:Record<string,string>={h:'home',t:'tickets',p:'purchasing',a:'assets',u:'people',s:'spaces',f:'files',o:'ops',x:'admin'};if(map[e.key]){go(map[e.key]);pendingG.current=0}}
+  if(Date.now()-pendingG.current<900){const map:Record<string,string>={h:'home',t:'tickets',p:'purchasing',a:'assets',i:'inventory',m:'maintenance',r:'reports',u:'people',s:'spaces',f:'files',o:'ops',x:'admin'};if(map[e.key]){go(map[e.key]);pendingG.current=0}}
  };window.addEventListener('keydown',f);return()=>window.removeEventListener('keydown',f)},[]);
 
  const create=[
@@ -112,9 +152,11 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
   {label:'New requisition',icon:'ClipboardList',path:'purchasing/pr/new',show:can('requests','create')},
   {label:'New purchase order',icon:'FileText',path:'purchasing/po/new',show:can('procurement','create')},
   {label:'Register asset',icon:'Boxes',path:'assets/all/new',show:can('assets','create')},
+  {label:'New work order',icon:'Wrench',path:'maintenance/orders/new',show:can('schedules','create')},
+  {label:'New stock item',icon:'Package',path:'inventory/items/new',show:can('inventory','create')},
   {label:'Write a page',icon:'PenLine',path:'spaces/edit/new',show:can('knowledge','create')},
   {label:'Upload file',icon:'Upload',path:'files/root/upload',show:can('documents','upload')},
-  {label:'Add person',icon:'UserPlus',path:'people/manage/new',show:can('settings','manage_members')},
+  {label:'Invite person',icon:'UserPlus',path:'people/manage/new',show:can('settings','manage_members')},
  ].filter(c=>c.show);
 
  return <AppContext.Provider value={ctx}>
@@ -134,10 +176,11 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
     </div>
    </nav>
    <aside className="rail" aria-label={`${current.label} navigation`}>
-    <div className="rail-head"><div><small>{s.tenant.name}</small><h2>{current.label}</h2></div><Btn size="sm" variant="ghost" icon="PanelLeftClose" title="Collapse sidebar" onClick={()=>{setRailOpen(false);setPref('rail',false)}}/></div>
+    <div className="rail-head"><div><WorkspaceSwitcher/><h2>{current.label}</h2></div><Btn size="sm" variant="ghost" icon="PanelLeftClose" title="Collapse sidebar" onClick={()=>{setRailOpen(false);setPref('rail',false)}}/></div>
     <RailBody app={current.id} views={views} active={activeView}/>
    </aside>
    <div className="stage">
+    {s.support&&<SupportBanner/>}
     <header className="topbar">
      <button className="topbar-menu" aria-label="Open navigation" onClick={()=>setMobileNav(!mobileNav)}><Icon name="Menu"/></button>
      {!railOpen&&<Btn size="sm" variant="ghost" icon="PanelLeftOpen" title="Show sidebar" onClick={()=>{setRailOpen(true);setPref('rail',true)}}/>}
@@ -197,3 +240,18 @@ function Notifications({open,onClose}:{open:boolean,onClose:()=>void}){
 }
 
 function Shortcuts({onClose}:{onClose:()=>void}){const rows=[['Ctrl K or /','Search and command palette'],['g h','Home'],['g t','Tickets'],['g p','Purchasing'],['g a','Assets'],['g u','People'],['g s','Spaces'],['g f','Files'],['g o','Operations'],['g x','Admin'],['Esc','Close panels and dialogs'],['Ctrl Enter','Send a comment'],['?','This list']];return <div className="overlay" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><div className="modal" role="dialog" aria-label="Keyboard shortcuts"><div className="modal-head"><h2>Keyboard shortcuts</h2><Btn icon="X" variant="ghost" title="Close" onClick={onClose}/></div><div className="modal-body"><dl className="shortcuts">{rows.map(([k,v])=><div key={k}><dt>{k.split(' ').map((x,i)=><kbd key={i}>{x}</kbd>)}</dt><dd>{v}</dd></div>)}</dl></div></div></div>}
+
+// Shows the active workspace; people with several memberships can switch. Switching reloads the
+// whole app so no data from the previous workspace can remain on screen.
+function WorkspaceSwitcher(){
+ const {s,toast}=useAppSafe();const others=s.memberships.filter(m=>m.tenantId!==s.tenant.id);
+ async function sw(memberId:string){try{await api('/api/session',{memberId});location.hash='#/home';location.reload()}catch(e){toast((e as Error).message,'error')}}
+ if(!others.length)return <small className="ws-name" title={s.tenant.name}>{s.tenant.name}</small>;
+ return <Menu align="left" trigger={open=><button className="ws-switch" onClick={open} aria-label="Switch workspace"><span className="ws-dot" style={{background:s.tenant.brandColor}}/><small>{s.tenant.name}</small><Icon name="ChevronsUpDown" size={13}/></button>} items={[...s.memberships.map(m=>({label:(m.tenantId===s.tenant.id?'✓ ':'   ')+m.name,icon:'Building2',onClick:()=>{if(m.tenantId!==s.tenant.id)sw(m.id)}}))]}/>;
+}
+// Persistent banner while the Platform Owner is inside another company's workspace.
+function SupportBanner(){
+ const {s,toast}=useAppSafe();const [busy,setBusy]=useState(false);
+ async function exit(){setBusy(true);try{await api('/api/platform',{action:'support-end'});location.hash='#/platform/workspaces';location.reload()}catch(e){toast((e as Error).message,'error');setBusy(false)}}
+ return <div className="support-banner" role="status"><Icon name="ShieldAlert" size={17}/><span><b>Platform support session</b> · You are managing <b>{s.support!.tenantName}</b>. Every action is recorded.<em>Reason: {s.support!.reason}</em></span><button className="support-exit" onClick={exit} disabled={busy}>{busy?'Exiting…':'Exit workspace'}</button></div>;
+}

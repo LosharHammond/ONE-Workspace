@@ -2,13 +2,16 @@
 import {createContext,useContext,useEffect,useMemo,useRef,useState,type ReactNode,type ComponentType} from 'react';
 import {icons as iconSet} from './icons';
 import {cx,initials,hue,downloadCsv,pref,setPref} from './lib';
+import qrcode from 'qrcode-generator';
 
 // ── Session ─────────────────────────────────────────────────────────────────
 export type Person={id:string,name:string,email:string,department:string,title:string,role:string,roleId:string|null,location:string,active:number};
 export type Session={
- user:{id:string,name:string,email:string,role:string,roleId:string|null,department:string,title:string,location:string,platformRole:string|null,permissions:Record<string,Record<string,string>>},
- tenant:{id:string,name:string,legalName:string,slug:string,brandColor:string,currency:string,timezone:string,domains:string,plan:string,settings:Record<string,any>},
- people:Person[],departments:{id:string,name:string,code:string,headId:string|null,color:string,description:string}[],locations:{id:string,name:string,path:string,parentId:string|null,kind:string}[],roles:{id:string,name:string,base:string}[],
+ user:{id:string,name:string,email:string,role:string,roleId:string|null,department:string,title:string,location:string,platformRole:string|null,permissions:Record<string,Record<string,string>>,identityId:string,defaultScreen:string},
+ tenant:{id:string,name:string,legalName:string,slug:string,brandColor:string,currency:string,timezone:string,domains:string,plan:string,status:string,settings:Record<string,any>,modules:string[]},
+ support:{id:string,reason:string,startedAt:string,tenantName:string}|null,
+ memberships:{id:string,tenantId:string,name:string,brandColor:string}[],
+ people:Person[],departments:{id:string,name:string,code:string,headId:string|null,color:string,description:string,parentId?:string|null,costCentre?:string,status?:string}[],locations:{id:string,name:string,path:string,parentId:string|null,kind:string}[],roles:{id:string,name:string,base:string}[],
  counts:{notifications:number,approvals:number,tickets:number},
 };
 type Ask={title:string,body?:ReactNode,confirm?:string,danger?:boolean,input?:{label:string,placeholder?:string,required?:boolean,type?:string,minLength?:number,multiline?:boolean}};
@@ -72,6 +75,10 @@ export type Col<T>={key:string,label:string,render?:(r:T)=>ReactNode,value?:(r:T
 export function Grid<T extends {id:string}>({id,rows,cols,onOpen,selectable,selected,onSelect,toolbar,empty,exportName,initialSort,pageSize=100,dense,activeId}:{id:string,rows:T[],cols:Col<T>[],onOpen?:(r:T)=>void,selectable?:boolean,selected?:Set<string>,onSelect?:(s:Set<string>)=>void,toolbar?:ReactNode,empty?:ReactNode,exportName?:string,initialSort?:[string,'asc'|'desc'],pageSize?:number,dense?:boolean,activeId?:string}){
  const [q,setQ]=useState(''),[filters,setFilters]=useState<Record<string,string>>({}),[sort,setSort]=useState<[string,'asc'|'desc']|null>(initialSort||null),[page,setPage]=useState(0),[showFilters,setShowFilters]=useState(false);
  const [hidden,setHidden]=useState<string[]>(()=>pref('grid:'+id,cols.filter(c=>c.hide).map(c=>c.key)));
+ const {ask,toast}=useApp();const [views,setViews]=useState<{id:string,name:string,state:{q?:string,filters?:Record<string,string>,sort?:[string,'asc'|'desc']|null,hidden?:string[]}}[]|null>(null);
+ const loadViews=()=>fetch('/api/views?grid='+encodeURIComponent(id)).then(r=>r.json() as Promise<{views?:never[]}>).then(d=>setViews(d.views||[])).catch(()=>setViews([]));
+ async function saveView(){const name=await ask({title:'Save this view',body:'Saves the current filters, sort and columns for you in this workspace.',confirm:'Save',input:{label:'View name',required:true}});if(name===false)return;const r=await fetch('/api/views',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({grid:id,name,state:{q,filters,sort,hidden}})});if(r.ok){toast('View saved');loadViews()}else toast(((await r.json()) as {error?:string}).error||'Could not save view','error')}
+ function applyView(v:{state:{q?:string,filters?:Record<string,string>,sort?:[string,'asc'|'desc']|null,hidden?:string[]}}){setQ(v.state.q||'');setFilters(v.state.filters||{});setSort(v.state.sort||null);if(v.state.hidden){setHidden(v.state.hidden);setPref('grid:'+id,v.state.hidden)}if(v.state.filters&&Object.values(v.state.filters).some(Boolean))setShowFilters(true)}
  const val=(c:Col<T>,r:T)=>c.value?c.value(r):String((r as Record<string,unknown>)[c.key]??'');
  const visible=cols.filter(c=>!hidden.includes(c.key));
  const filtered=useMemo(()=>{let out=rows;const ql=q.toLowerCase();if(ql)out=out.filter(r=>cols.some(c=>String(val(c,r)).toLowerCase().includes(ql)));for(const [k,v] of Object.entries(filters))if(v){const c=cols.find(x=>x.key===k);if(c)out=out.filter(r=>String(val(c,r)).toLowerCase().includes(v.toLowerCase()))}if(sort){const c=cols.find(x=>x.key===sort[0]);if(c)out=[...out].sort((a,b)=>{const x=val(c,a),y=val(c,b);const n=typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),undefined,{numeric:true});return sort[1]==='asc'?n:-n})}return out},[rows,q,filters,sort,cols]);
@@ -84,6 +91,7 @@ export function Grid<T extends {id:string}>({id,rows,cols,onOpen,selectable,sele
    <div className="grid-search"><Icon name="Search" size={16}/><input placeholder="Filter this list…" value={q} onChange={e=>setQ(e.target.value)} aria-label="Filter rows"/>{q&&<button className="link" onClick={()=>setQ('')}><Icon name="X" size={14}/></button>}</div>
    {toolbar}
    <div className="grid-tools">
+    <Menu trigger={open=><Btn size="sm" variant="ghost" icon="Bookmark" title="Saved views" onClick={()=>{if(!views)loadViews();open()}}/>} items={[{label:'Save current view…',icon:'BookmarkPlus',onClick:saveView},...(views?.length?['-' as const,...views.map(v=>({label:v.name,icon:'Bookmark',onClick:()=>applyView(v)})),'-' as const,...views.map(v=>({label:`Delete “${v.name}”`,icon:'Trash2',danger:true,onClick:()=>{fetch('/api/views',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'delete',id:v.id})}).then(loadViews)}}))]:[])]}/>
     <Btn size="sm" variant={showFilters||Object.values(filters).some(Boolean)?'subtle':'ghost'} icon="ListFilter" title="Column filters" onClick={()=>setShowFilters(!showFilters)}/>
     <Menu trigger={open=><Btn size="sm" variant="ghost" icon="Columns3" title="Choose columns" onClick={open}/>} items={cols.map(c=>({label:(hidden.includes(c.key)?'   ':'✓ ')+c.label,onClick:()=>toggleCol(c.key)}))}/>
     {exportName&&<Btn size="sm" variant="ghost" icon="Download" title="Export CSV" onClick={()=>downloadCsv(exportName,[visible.map(c=>c.label),...filtered.map(r=>visible.map(c=>val(c,r)))])}/>}
@@ -132,3 +140,19 @@ export function Thread({comments,onPost,allowInternal}:{comments:{id:string,auth
  </div>;
 }
 export function Timeline({events}:{events:{id:string,action:string,actor:string,createdAt:string}[]}){const {person}=useApp();if(!events.length)return <p className="muted small">No activity recorded yet.</p>;return <ol className="timeline">{events.map(e=><li key={e.id}><span className="dot"/><div><b>{e.action}</b><small>{person(e.actor)?.name||'System'} · {new Date(e.createdAt).toLocaleString('en-GB',{day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit'})}</small></div></li>)}</ol>}
+
+// ── Attachments on a record (ticket, asset, requisition/order, work order, page) ─
+export function Attachments({type,id,files,onChange,canUpload=true}:{type:string,id:string,files:{id:string,name:string,mime:string,bytes:number,uploadedBy:string,createdAt:string}[],onChange:()=>void,canUpload?:boolean}){
+ const {toast,person}=useApp();const [busy,setBusy]=useState(false);
+ async function upload(list:FileList|null){if(!list?.length)return;setBusy(true);let ok=0;for(const file of Array.from(list)){const fd=new FormData();fd.set('file',file);fd.set('entityType',type);fd.set('entityId',id);fd.set('visibility','company');const r=await fetch('/api/files',{method:'POST',body:fd});if(r.ok)ok++;else toast(`${file.name}: ${((await r.json().catch(()=>({}))) as {error?:string}).error||'upload failed'}`,'error')}setBusy(false);if(ok){toast(`${ok} attachment${ok>1?'s':''} added`);onChange()}}
+ const size=(n:number)=>n<1048576?`${Math.round(n/1024)} KB`:`${(n/1048576).toFixed(1)} MB`;
+ return <div className="attachments">{files.map(f=><div key={f.id} className="attachment">{f.mime.startsWith('image/')?<img alt="" src={`/api/files?preview=${f.id}`}/>:<span className="attachment-icon"><Icon name={f.mime==='application/pdf'?'FileText':'File'} size={18}/></span>}<div><a href={`/api/files?download=${f.id}`}>{f.name}</a><small>{size(f.bytes)} · {person(f.uploadedBy)?.name||'—'}</small></div></div>)}
+  {!files.length&&<p className="muted small">No attachments yet.</p>}
+  {canUpload&&<label className="btn btn-sm btn-default attach-btn"><Icon name={busy?'Loader':'Paperclip'} size={15}/><span>{busy?'Uploading…':'Attach files'}</span><input type="file" multiple hidden onChange={e=>{upload(e.target.files);e.target.value=''}}/></label>}
+ </div>;
+}
+// ── QR code for asset labels (rendered locally, no external service) ────────
+export function QRCode({value,size=132}:{value:string,size?:number}){
+ const svg=useMemo(()=>{const qr=qrcode(0,'M');qr.addData(value);qr.make();const n=qr.getModuleCount();let d='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(qr.isDark(r,c))d+=`M${c} ${r}h1v1h-1z`;return {n,d}},[value]);
+ return <svg className="qr" width={size} height={size} viewBox={`-2 -2 ${svg.n+4} ${svg.n+4}`} role="img" aria-label={`QR code for ${value}`}><rect x="-2" y="-2" width={svg.n+4} height={svg.n+4} fill="#fff"/><path d={svg.d} fill="#000"/></svg>;
+}

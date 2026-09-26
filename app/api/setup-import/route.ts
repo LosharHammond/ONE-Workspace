@@ -1,7 +1,8 @@
 import {env} from 'cloudflare:workers';
 import {db,json,failure,HttpError,hash} from '../../server/core';
 import {equal} from '../../server/passwords';
-const tables:Record<string,string[]>={import_batches:['id','source','dataset','filename','sha256','imported_at','row_count','headers_json'],source_rows:['id','batch_id','source_key','sheet','row_number','payload_json'],links:['from_id','to_id','kind'],quality_issues:['id','batch_id','kind','detail_json'],members:['id','name','email','role','department','active','created_at'],passwords:['member_id','username','salt','password_hash','iterations','must_change']};
+// Source-archive tables only. People are created through invitations, never with imported password hashes.
+const tables:Record<string,string[]>={import_batches:['id','source','dataset','filename','sha256','imported_at','row_count','headers_json'],source_rows:['id','batch_id','source_key','sheet','row_number','payload_json'],links:['from_id','to_id','kind'],quality_issues:['id','batch_id','kind','detail_json']};
 export async function POST(req:Request){try{
  if(!env.DATA_IMPORT_TOKEN||!equal(await hash(req.headers.get('Authorization')||''),await hash('Bearer '+env.DATA_IMPORT_TOKEN)))throw new HttpError(404,'Not found.');
  if(await db().prepare("SELECT id FROM audit WHERE id='initial-import-closed'").first())throw new HttpError(403,'Initial import is closed.');

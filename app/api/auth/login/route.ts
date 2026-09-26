@@ -1,12 +1,18 @@
-import {db,json,failure,sameOrigin,readBody,HttpError,hash,setCookie,SESSION_COOKIE} from '../../../server/core';
-import {derive,equal,randomHex,ITERATIONS} from '../../../server/passwords';
-export async function POST(req:Request){try{sameOrigin(req);const b=await readBody(req);if(typeof b.login!=='string'||typeof b.password!=='string'||b.password.length>256||b.login.length>200)throw new HttpError(400,'Enter your email or username and password.');const login=b.login.trim().toLowerCase(),key=await hash('login:'+login),now=Date.now();
- await db().prepare('DELETE FROM login_attempts WHERE expires<?').bind(now).run();
- const attempt=await db().prepare('INSERT INTO login_attempts(key,attempts,expires) VALUES(?,1,?) ON CONFLICT(key) DO UPDATE SET attempts=attempts+1 RETURNING attempts').bind(key,now+900000).first<{attempts:number}>();if((attempt?.attempts||0)>5)throw new HttpError(429,'Too many attempts. Try again in 15 minutes.');
- const matches=await db().prepare("SELECT m.id,m.active,m.tenant_id,t.status AS tenant_status,p.salt,p.password_hash,p.iterations,p.must_change FROM members m JOIN passwords p ON p.member_id=m.id JOIN tenants t ON t.id=m.tenant_id WHERE lower(m.email)=? OR p.username=? LIMIT 2").bind(login,login).all<{id:string,active:number,tenant_id:string,tenant_status:string,salt:string,password_hash:string,iterations:number,must_change:number}>();const p=matches.results.length===1?matches.results[0]:null;
- // Always derive, even for unknown accounts, so timing does not reveal which logins exist.
- const candidate=await derive(b.password,p?.salt||'00'.repeat(32),p?.iterations||ITERATIONS);if(!p||p.active!==1||!equal(candidate,p.password_hash))throw new HttpError(401,'Incorrect credentials or inactive account.');
- if(p.tenant_status!=='active')throw new HttpError(403,'This company workspace is suspended. Contact your workspace provider.');
- const token=randomHex();await db().batch([db().prepare('DELETE FROM login_attempts WHERE key=?').bind(key),db().prepare('DELETE FROM sessions WHERE expires<?').bind(now),db().prepare('INSERT INTO sessions(token_hash,member_id,expires) VALUES(?,?,?)').bind(await hash(token),p.id,now+28800000),db().prepare('UPDATE members SET last_seen_at=? WHERE id=?').bind(new Date().toISOString(),p.id),db().prepare('INSERT INTO audit(id,action,actor,record_id,department,created_at,tenant_id) VALUES(?,?,?,?,?,?,?)').bind(crypto.randomUUID(),'Signed in',p.id,p.id,'',new Date().toISOString(),p.tenant_id)]);
- const response=json({ok:true,mustChange:!!p.must_change});response.headers.set('Set-Cookie',setCookie(SESSION_COOKIE,token,28800));return response;
- }catch(e){return failure(e)}}
+import {json,failure,sameOrigin,readBody,HttpError,first,stmt,batch,uid,now} from '../../../server/core';
+import {derive,equal,ITERATIONS} from '../../../server/passwords';
+import {rateLimit,pickMembership,createSession,clientIp} from '../../../server/auth';
+export async function POST(req:Request){try{
+ sameOrigin(req);const b=await readBody(req);
+ if(typeof b.login!=='string'||typeof b.password!=='string'||b.password.length>256||b.login.length>200)throw new HttpError(400,'Enter your email or username and password.');
+ const login=b.login.trim().toLowerCase();
+ const key=await rateLimit('login',login);await rateLimit('login-ip',clientIp(req)||'unknown',30);
+ const id=await first<{id:string,email:string,salt:string|null,password_hash:string|null,iterations:number|null,must_change:number|null,last_member_id:string|null}>('SELECT i.id,i.email,i.last_member_id,c.salt,c.password_hash,c.iterations,c.must_change FROM identities i LEFT JOIN credentials c ON c.identity_id=i.id WHERE i.email=? OR lower(i.username)=? LIMIT 1',login,login);
+ // Always derive, even for unknown or not-yet-activated accounts, so timing does not reveal which logins exist.
+ const candidate=await derive(b.password,id?.salt||'00'.repeat(32),id?.iterations||ITERATIONS);
+ if(!id||!id.password_hash||!equal(candidate,id.password_hash))throw new HttpError(401,'Incorrect credentials or inactive account.');
+ const m=await pickMembership(id.id,id.email,id.last_member_id);
+ if(!m)throw new HttpError(403,'Your account has no active workspace. Contact your company administrator.');
+ const cookie=await createSession(id.id,m.id);
+ await batch([stmt('DELETE FROM login_attempts WHERE key=?',key),stmt('UPDATE members SET last_seen_at=? WHERE id=?',now(),m.id),stmt('INSERT INTO audit(id,action,actor,record_id,department,created_at,tenant_id) VALUES(?,?,?,?,?,?,?)',uid(),'Signed in',m.id,m.id,'',now(),m.tenant_id)]);
+ const res=json({ok:true,mustChange:!!id.must_change});res.headers.set('Set-Cookie',cookie);return res;
+}catch(e){return failure(e)}}
