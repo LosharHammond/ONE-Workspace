@@ -39,9 +39,8 @@ const year=new Date().getUTCFullYear();
 tickets.forEach(([t,p,s,d,a,r],i)=>{const created=new Date(Date.now()-(i+1)*26*3600000).toISOString();const due=new Date(Date.parse(created)+({Urgent:4,High:24,Medium:72,Low:120}[p])*3600000).toISOString();sql.push(`INSERT OR IGNORE INTO tickets(id,tenant_id,number,title,description,type,category,priority,status,department,assignee_id,requester_id,location,due_at,resolved_at,created_at,updated_at) VALUES('t${i}','procus','TKT-${year}-${String(i+1).padStart(4,'0')}',${q(t)},'Reported from the local seed.','Incident','Hardware',${q(p)},${q(s)},${q(d)},${q(a)},${q(r)},'TEMA > HQ',${q(due)},${s==='Resolved'?q(now):'NULL'},${q(created)},${q(created)});`)});
 sql.push(`INSERT OR REPLACE INTO counters(tenant_id,key,value) VALUES('procus','TKT-${year}',${tickets.length});`);
 for(const [n,e,c] of [['Accra Office Supplies Ltd','orders@accra-office.test','Stationery'],['TechHub Ghana','sales@techhub.test','IT hardware'],['Tema Packaging Co.','','Packaging']])sql.push(`INSERT OR IGNORE INTO vendors(id,tenant_id,name,email,category,status,created_by,created_at) VALUES(${q(randomUUID())},'procus',${q(n)},${q(e)},${q(c)},'Active','u-proc',${q(now)});`);
-// Local-only password for the platform owner created by migration 0007 (production uses /api/platform/claim).
-const owner=hashFor(TEST_PASSWORD);
-sql.push(`INSERT OR REPLACE INTO passwords(member_id,username,salt,password_hash,iterations,must_change) SELECT 'platform-owner','losharhammond@gmail.com',${q(owner.salt)},${q(owner.hash)},${iterations},0 WHERE EXISTS(SELECT 1 FROM members WHERE id='platform-owner');`);
+// The platform owner (losharhammond@gmail.com) is not given a password here: set it with
+// "Platform owner first-time setup" on the sign-in page and PLATFORM_SETUP_TOKEN in .dev.vars.
 // A second company proves tenant isolation locally.
 const other=hashFor(TEST_PASSWORD);
 sql.push(`INSERT OR IGNORE INTO tenants(id,slug,name,legal_name,domains,status,plan,brand_color,currency,timezone,settings_json,created_at) VALUES('acme','acme-foods','Acme Foods','Acme Foods Ltd','acme.test','active','business','#0E9AA7','GHS','Africa/Accra','{}',${q(now)});`);

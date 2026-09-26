@@ -10,7 +10,7 @@ npm run seed:local         # optional: test people and sample records (local onl
 npm run dev
 ```
 
-Open http://localhost:5173. The seed creates a Procus Ghana admin (`admin@onews.test`), department heads, a buyer and staff so you can walk a requisition through every approval step, plus a second company (`admin@acme.test`) to check tenant isolation, and gives the platform owner account (losharhammond@gmail.com) a local password. The shared test password is `TEST_PASSWORD` in `scripts/seed-local.mjs`.
+Open http://localhost:5173. The seed creates a Procus Ghana admin (`admin@onews.test`), department heads, a buyer and staff so you can walk a requisition through every approval step, plus a second company (`admin@acme.test`) to check tenant isolation. The platform owner account (losharhammond@gmail.com) has no password: set it with "Platform owner first-time setup" and a `PLATFORM_SETUP_TOKEN` in `.dev.vars`. The shared test password is `TEST_PASSWORD` in `scripts/seed-local.mjs`.
 
 ## Checks
 
