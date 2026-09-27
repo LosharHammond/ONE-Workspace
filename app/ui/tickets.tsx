@@ -1,7 +1,7 @@
 'use client';
 import {useMemo,useState} from 'react';
 import {api,useApi,go,ago,until,dateTime,cx} from './lib';
-import {useApp,Attachments,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Markdown,Thread,Timeline,Tabs,Segmented,ErrorNote,Skeleton,Empty,KV,type Col} from './kit';
+import {useApp,Attachments,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Markdown,Thread,Timeline,Tabs,Segmented,ErrorNote,Skeleton,Empty,KV,type Col,LookupSelect} from './kit';
 import {AiActions} from './assistant';
 import {ticketStatuses,ticketPriorities,ticketTypes} from '../data';
 
@@ -84,7 +84,7 @@ function TicketPanel({id,onClose,onChanged}:{id:string,onClose:()=>void,onChange
 }
 
 function TicketForm({init,onSubmit,busy,submitLabel}:{init:Partial<Ticket&{description:string}>,onSubmit:(v:Record<string,unknown>)=>void,busy:boolean,submitLabel:string}){
- const {s}=useApp();const cats=String(s.tenant.settings.ticketCategories||'Hardware, Software, Network, Email, Access, Facilities, Electrical, Plumbing, Vehicle, Other').split(',').map(x=>x.trim()).filter(Boolean);
+ const {s}=useApp();
  const [v,setV]=useState({impact:init.impact||'Medium',urgency:init.urgency||'Medium',subcategory:init.subcategory||'',affectedUserId:init.affected_user_id||null as string|null,title:init.title||'',type:init.type||'Incident',priority:init.priority||'Medium',department:init.department||s.departments.find(d=>/^it$/i.test(d.name))?.name||s.user.department,category:init.category||'',location:init.location??s.user.location??'',description:init.description||'',assetId:init.asset_id||''});
  const {data:assets}=useApi<{assets:{id:string,code:string,name:string,assigned_to:string|null}[]}>('/api/assets');
  const mine=(assets?.assets||[]).filter(a=>a.assigned_to===s.user.id);
@@ -95,9 +95,9 @@ function TicketForm({init,onSubmit,busy,submitLabel}:{init:Partial<Ticket&{descr
   <Field label="Urgency"><select value={v.urgency} onChange={e=>setV({...v,urgency:e.target.value,priority:derive(v.impact,e.target.value)})}>{['Low','Medium','High'].map(x=><option key={x}>{x}</option>)}</select></Field>
   <Field label="Priority" hint="Suggested from impact × urgency; you can override it."><div className="prio-picker">{ticketPriorities.map(p=><button type="button" key={p} className={cx('prio-opt',`prio-${p.toLowerCase()}`,v.priority===p&&'on')} onClick={()=>setV({...v,priority:p})}>{p}</button>)}</div></Field>
   <Field label="Type"><select value={v.type} onChange={e=>setV({...v,type:e.target.value})}>{ticketTypes.map(x=><option key={x}>{x}</option>)}</select></Field>
-  <Field label="Subcategory"><input value={v.subcategory} onChange={e=>setV({...v,subcategory:e.target.value})}/></Field>
+  <Field label="Subcategory"><LookupSelect list="ticket-subcategories" label="Ticket subcategories" parent={v.category} value={v.subcategory} onChange={x=>setV({...v,subcategory:x})}/></Field>
   <Field label="Affected user" hint="If different from you."><PersonSelect value={v.affectedUserId} onChange={x=>setV({...v,affectedUserId:x})}/></Field>
-  <Field label="Category"><input list="ticket-cats" value={v.category} onChange={e=>setV({...v,category:e.target.value})}/><datalist id="ticket-cats">{cats.map(c=><option key={c} value={c}/>)}</datalist></Field>
+  <Field label="Category"><LookupSelect list="ticket-categories" label="Ticket categories" value={v.category} onChange={x=>setV({...v,category:x,subcategory:''})}/></Field>
   <Field label="Location"><LocationInput value={v.location} onChange={x=>setV({...v,location:x})}/></Field>
   <Field label="Related asset" hint={mine.length?'Assets assigned to you are listed first.':undefined}><select value={v.assetId} onChange={e=>setV({...v,assetId:e.target.value})}><option value="">None</option>{mine.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}{(assets?.assets||[]).filter(a=>a.assigned_to!==s.user.id).slice(0,500).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select></Field>
   <Field label="Details" wide hint="Markdown supported: **bold**, lists, links."><textarea rows={6} maxLength={8000} value={v.description} placeholder="What happened, since when, what have you tried?" onChange={e=>setV({...v,description:e.target.value})}/></Field>

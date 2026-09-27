@@ -6,6 +6,7 @@ import {pageLabels,baseRoleLabels} from '../access-policy';
 import CompanyData from '../company-data';
 import {modules as moduleCatalog} from '../modules';
 import {ConnectorCenter,AiSettings} from './integrations';
+import Lists from './lists';
 
 export default function Admin({parts}:{parts:string[]}){
  const {s,can}=useApp();const admin=s.user.role==='admin';
@@ -17,6 +18,7 @@ export default function Admin({parts}:{parts:string[]}){
  if(view==='security'&&admin)return <Activity security/>;
  if(view==='connectors'&&(admin||can('connectors')))return <ConnectorCenter scope="company" parts={parts.slice(1)}/>;
  if(view==='ai'&&admin)return <AiSettings/>;
+ if(view==='lists'&&(admin||can('settings','configure')))return <Lists listId={parts[1]}/>;
  if(admin)return <Company/>;
  return <div className="page"><Empty icon="Lock" title="Administrator access required"/></div>;
 }
@@ -41,9 +43,7 @@ function Company(){
     <Field label="Requisitions"><input value={v.prPrefix||'PR'} onChange={f('prPrefix')}/></Field><Field label="Purchase orders"><input value={v.poPrefix||'PO'} onChange={f('poPrefix')}/></Field><Field label="Tickets"><input value={v.ticketPrefix||'TKT'} onChange={f('ticketPrefix')}/></Field><Field label="Assets"><input value={v.assetPrefix||'AST'} onChange={f('assetPrefix')}/></Field><Field label="Work orders"><input value={v.woPrefix||'WO'} onChange={f('woPrefix')}/></Field>
    </div><p className="muted small">Numbers look like {v.prPrefix||'PR'}-{new Date().getFullYear()}-0001 and restart each year. Asset codes run continuously.</p></Card>
    <Card title="Lists & defaults"><div className="form-grid">
-    <Field label="Ticket categories" wide><input value={v.ticketCategories||''} onChange={f('ticketCategories')} placeholder="Hardware, Software, Network, Facilities…"/></Field>
-    <Field label="Asset categories" wide><input value={v.assetCategories||''} onChange={f('assetCategories')} placeholder="Laptop, Printer, Vehicle, Machinery…"/></Field>
-    <Field label="Inventory categories" wide><input value={v.inventoryCategories||''} onChange={f('inventoryCategories')} placeholder="Consumables, Spare parts, Packaging…"/></Field>
+    <div className="field wide"><span className="field-label">Categories, units and other pick lists</span><Note>Ticket, asset and inventory categories, subcategories, units, brands, vendor categories, cost centres and job titles are managed in <a href="#/admin/lists">Company settings › Lists</a>, together with departments, locations and vendors.</Note></div>
     <Field label="Default purchase order terms" wide><textarea rows={3} value={v.poTerms||''} onChange={f('poTerms')}/></Field>
    </div></Card>
    <Card title="Modules"><div className="chips-wrap">{moduleCatalog.map(m=><Chip key={m.id} tone={(s.tenant.modules||[]).includes(m.id)?'green':'gray'}>{m.label}</Chip>)}</div><p className="muted small">Modules and plan limits are managed by the Platform Owner.</p></Card>
@@ -84,7 +84,7 @@ function RoleEditor({role,setRole,data,dropped,onClose,onSave,onDelete}:{role:Ro
  function setCell(page:string,action:string,val:string){const p={...role.permissions};const acts={...(p[page]||{})};if(val==='')delete acts[action];else acts[action]=val;if(Object.keys(acts).length)p[page]=acts;else delete p[page];setRole({...role,permissions:p})}
  function togglePage(p:string,on:boolean){const pages=on?[...(role.pages||[]),p]:(role.pages||[]).filter(x=>x!==p);const permissions={...role.permissions};if(on&&!permissions[p]?.view)permissions[p]={...(permissions[p]||{}),view:p==='assistant'?'own':(['it','research','company-data'].includes(p)?'all':'department')};if(!on)delete permissions[p];setRole({...role,pages,permissions})}
  const shared=(p:string)=>['it','research','company-data'].includes(p);
- const cats=String(s.tenant.settings.assetCategories||'').split(',').map(x=>x.trim()).filter(Boolean);
+ const cats=(s.lookups['asset-categories']||[]).map(x=>x.value);
  const scope=role.scope||{};const setScope=(k:keyof RoleScope,v:string[])=>setRole({...role,scope:{...scope,[k]:v}});
  const visible=(pages:string[])=>pages.filter(p=>pageActions[p]&&entitledPages.includes(p));
  // The preview is computed by the server with the same rules it enforces.

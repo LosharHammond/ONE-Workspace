@@ -1,7 +1,7 @@
 'use client';
 import {createContext,useContext,useEffect,useMemo,useRef,useState,type ReactNode,type ComponentType} from 'react';
 import {icons as iconSet} from './icons';
-import {cx,initials,hue,downloadCsv,pref,setPref} from './lib';
+import {cx,initials,hue,downloadCsv,pref,setPref,api} from './lib';
 import qrcode from 'qrcode-generator';
 
 // ── Session ─────────────────────────────────────────────────────────────────
@@ -13,6 +13,7 @@ export type Session={
  memberships:{id:string,tenantId:string,name:string,brandColor:string}[],
  people:Person[],departments:{id:string,name:string,code:string,headId:string|null,color:string,description:string,parentId?:string|null,costCentre?:string,status?:string}[],locations:{id:string,name:string,path:string,parentId:string|null,kind:string}[],roles:{id:string,name:string,base:string}[],
  counts:{notifications:number,approvals:number,tickets:number},
+ lookups:Record<string,{value:string,parent:string}[]>,vendors:{id:string,name:string}[],
 };
 type Ask={title:string,body?:ReactNode,confirm?:string,danger?:boolean,input?:{label:string,placeholder?:string,required?:boolean,type?:string,minLength?:number,multiline?:boolean}};
 type Ctx={s:Session,can:(page:string,action?:string)=>boolean,scope:(page:string,action?:string)=>string,person:(id?:string|null)=>Person|undefined,refresh:()=>Promise<void>,toast:(msg:string,tone?:'ok'|'error'|'info')=>void,ask:(a:Ask)=>Promise<string|false>};
@@ -68,7 +69,38 @@ export function PersonSelect({value,onChange,placeholder='Search people…',filt
  return <div className="combo" ref={ref}>{cur&&!open?<button type="button" className="combo-value" onClick={()=>setOpen(true)}><Avatar name={cur.name} size={20}/><span>{cur.name}</span><small>{cur.department}</small>{allowClear&&<span className="combo-clear" role="button" aria-label="Clear" onClick={e=>{e.stopPropagation();onChange(null)}}><Icon name="X" size={14}/></span>}</button>:<input value={q} placeholder={placeholder} onFocus={()=>setOpen(true)} onChange={e=>{setQ(e.target.value);setOpen(true)}} autoFocus={open&&!!cur}/>}{open&&<div className="combo-list">{list.map(p=><button type="button" key={p.id} onClick={()=>{onChange(p.id);setOpen(false);setQ('')}}><Avatar name={p.name} size={22}/><span>{p.name}<small>{[p.title,p.department].filter(Boolean).join(' · ')}</small></span></button>)}{!list.length&&<div className="combo-empty">No matches</div>}</div>}</div>;
 }
 export function DeptSelect({value,onChange,any,required}:{value:string,onChange:(v:string)=>void,any?:string,required?:boolean}){const {s}=useApp();const names=[...new Set([...s.departments.map(d=>d.name),...(value&&value!=='*'?[value]:[])])].sort();return <select value={value} required={required} onChange={e=>onChange(e.target.value)}>{any!==undefined&&<option value={any==='*'?'*':''}>{any==='*'?'All departments':any||'—'}</option>}{!any&&!value&&<option value="">Choose…</option>}{names.map(n=><option key={n}>{n}</option>)}</select>}
-export function LocationInput({value,onChange,placeholder='Site > Unit > Area'}:{value:string,onChange:(v:string)=>void,placeholder?:string}){const {s}=useApp();const id=useMemo(()=>'loc-'+Math.random().toString(36).slice(2),[]);return <><input list={id} value={value} placeholder={placeholder} onChange={e=>onChange(e.target.value)}/><datalist id={id}>{s.locations.map(l=><option key={l.id} value={l.path}/>)}</datalist></>}
+// Location picker: people choose from the company's location tree (Company settings › Lists › Locations).
+// Anyone who may create locations can add one inline ("Site > Building" adds Building under Site).
+export function LocationInput({value,onChange,placeholder='Choose a location',required}:{value:string,onChange:(v:string)=>void,placeholder?:string,required?:boolean}){
+ const {s,can,ask,toast,refresh}=useApp();const paths=s.locations.map(l=>l.path);const add=can('locations','create');
+ return <select value={value} required={required} onChange={async e=>{const v=e.target.value;if(v!=='__add'){onChange(v);return}
+  const path=await ask({title:'Add a location',body:'Use > to place it inside an existing location, e.g. Head Office > Store 2.',confirm:'Add',input:{label:'Location',required:true,placeholder:'Head Office > Store 2'}});if(path===false)return;
+  const parts=path.split('>').map(x=>x.trim()).filter(Boolean);const name=parts.pop()||'';const parentPath=parts.join(' > ');const parent=parentPath?s.locations.find(l=>l.path.toLowerCase()===parentPath.toLowerCase()):null;
+  if(parentPath&&!parent){toast(`“${parentPath}” is not a location yet. Add it first.`,'error');return}
+  try{const r=await api<{path:string}>('/api/org',{action:'location',name,parentId:parent?.id||null});await refresh();onChange(r.path)}catch(err){toast((err as Error).message,'error')}}}>
+  <option value="">{placeholder}</option>{value&&!paths.includes(value)&&<option value={value}>{value} (not in list)</option>}{paths.map(p=><option key={p} value={p}>{p}</option>)}{add&&<option value="__add">+ Add a location…</option>}
+ </select>;
+}
+// Pick-list for any company list (Company settings › Lists). Values outside the list are kept but flagged.
+export function LookupSelect({list,value,onChange,parent,placeholder='Choose…',required,label}:{list:string,value:string,onChange:(v:string)=>void,parent?:string,placeholder?:string,required?:boolean,label?:string}){
+ const {s,can,ask,toast,refresh}=useApp();const manage=s.user.role==='admin'||can('settings','configure');
+ const all=s.lookups?.[list]||[];const opts=[...new Set(all.filter(o=>parent===undefined||o.parent===parent).map(o=>o.value))];
+ return <select value={value} required={required} aria-label={label} onChange={async e=>{const v=e.target.value;if(v!=='__add'){onChange(v);return}
+  const nv=await ask({title:`Add to ${label||'this list'}`,confirm:'Add',input:{label:'Value',required:true}});if(nv===false)return;
+  try{await api('/api/lookups',{action:'save',list,value:nv,parent:parent||''});await refresh();onChange(nv.trim())}catch(err){toast((err as Error).message,'error')}}}>
+  <option value="">{parent===''?'Choose the parent first':placeholder}</option>{value&&!opts.includes(value)&&<option value={value}>{value} (not in list)</option>}{opts.map(o=><option key={o} value={o}>{o}</option>)}{manage&&parent!==''&&<option value="__add">+ Add new…</option>}
+  {!opts.length&&!manage&&<option value="" disabled>No values yet. Ask an administrator.</option>}
+ </select>;
+}
+// Vendor picker by name (records that store a vendor name, e.g. assets).
+export function VendorSelect({value,onChange}:{value:string,onChange:(v:string)=>void}){
+ const {s,can,ask,toast,refresh}=useApp();const names=(s.vendors||[]).map(v=>v.name);const add=can('suppliers','create');
+ return <select value={value} onChange={async e=>{const v=e.target.value;if(v!=='__add'){onChange(v);return}
+  const name=await ask({title:'Add a vendor',confirm:'Add',input:{label:'Vendor name',required:true}});if(name===false)return;
+  try{await api('/api/purchasing',{action:'vendor',name});await refresh();onChange(name.trim())}catch(err){toast((err as Error).message,'error')}}}>
+  <option value="">—</option>{value&&!names.includes(value)&&<option value={value}>{value} (not in list)</option>}{names.map(n=><option key={n} value={n}>{n}</option>)}{add&&<option value="__add">+ Add a vendor…</option>}
+ </select>;
+}
 
 // ── Data grid ───────────────────────────────────────────────────────────────
 export type Col<T>={key:string,label:string,render?:(r:T)=>ReactNode,value?:(r:T)=>string|number,width?:number,align?:'right',hide?:boolean,sortable?:boolean};

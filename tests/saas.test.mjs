@@ -197,7 +197,7 @@ test('18–19. The assistant answers from A’s data with citations and never re
 
 test('20. A restricted user’s AI cannot reveal records outside their permissions',async()=>{
  await A.admin.post('/api/tickets',{action:'create',title:'ADMIN-ONLY-SECRET printer budget',description:'confidential',department:'Finance'});
- const u=await invite(A.admin,A,'Rita Standard',`rita@${A.domain}`,{role:'employee',department:'Sales'});
+ const u=A.rita=await invite(A.admin,A,'Rita Standard',`rita@${A.domain}`,{role:'employee',department:'Sales'});
  await u.client.post('/api/tickets',{action:'create',title:'MY-OWN printer toner',department:'IT'});
  await mockReset();
  const r=await u.client.stream('/api/ai',{action:'chat',message:'printer'});assert.equal(r.status,200,r.text.slice(0,200));
@@ -240,4 +240,52 @@ test('23. Suspending a company blocks its people but not the Platform Owner',asy
 test('24. Existing pages keep working alongside the new features',async()=>{
  for(const p of ['/api/dashboard','/api/search?q=printer','/api/tickets','/api/assets','/api/purchasing','/api/files','/api/pages','/api/reports','/api/people','/api/org','/api/audit','/api/ai?view=status','/api/app-pages','/api/connectors'])assert.equal((await A.admin.get(p)).status,200,p);
  const s=(await A.admin.get('/api/search?q=printer')).data.results;assert.ok(s.some(x=>x.id===A.ticket));assert.ok(!s.some(x=>x.id===B.ticket));
+});
+
+test('25. Company lists: admins manage values once; every form reads them; lists stay inside the company',async()=>{
+ const c=A.admin;
+ // Suspension in scenario 23 ended the staff sessions; sign them in again.
+ await A.it.client.login(A.it.email,A.it.pw);await A.rita.client.login(A.rita.email,A.rita.pw);
+ const add=await c.post('/api/lookups',{action:'save',list:'asset-categories',value:'Drones'});assert.equal(add.status,200,JSON.stringify(add.data));
+ assert.equal((await c.post('/api/lookups',{action:'save',list:'asset-categories',value:'drones'})).status,409,'no duplicates (case-insensitive)');
+ assert.equal((await c.post('/api/lookups',{action:'save',list:'asset-subcategories',value:'Quadcopter',parent:'Nope'})).status,400,'subcategories need an existing parent');
+ assert.equal((await c.post('/api/lookups',{action:'save',list:'asset-subcategories',value:'Quadcopter',parent:'Drones'})).status,200);
+ assert.equal((await c.post('/api/lookups',{action:'delete',id:add.data.id})).status,409,'a parent with children cannot be deleted');
+ const staff=(await A.it.client.get('/api/session')).data.lookups;assert.ok(staff['asset-categories'].some(x=>x.value==='Drones'),'staff forms see the list');
+ assert.ok(staff['units'].length>0&&staff['ticket-categories'].length>0,'default lists are seeded');
+ assert.equal((await A.it.client.post('/api/lookups',{action:'save',list:'units',value:'crate'})).status,403,'staff cannot change lists');
+ assert.ok(!(await B.admin.get('/api/session')).data.lookups['asset-categories'].some(x=>x.value==='Drones'),'lists never leak between companies');
+ const loc=await c.post('/api/org',{action:'location',name:'Drone Hangar',kind:'Site'});assert.equal(loc.status,200);
+ assert.ok((await A.it.client.get('/api/session')).data.locations.some(l=>l.path==='Drone Hangar'),'new locations appear in every location picker');
+ assert.ok(sql(`SELECT count(*) AS n FROM audit WHERE tenant_id='${A.id}' AND action LIKE 'List value added%'`)[0].n>=2);
+});
+
+test('26. Vector search: embeddings and retrieval stay inside the company and respect permissions',async()=>{
+ const c=A.admin;
+ assert.equal((await B.admin.post('/api/ai',{action:'knowledge-index'})).status,409,'no embedding service is bound for B (Groq has no embeddings)');
+ assert.equal((await c.post('/api/ai',{action:'provider-save',provider:'openai-compatible',model:'mock-model',baseUrl:`${MOCK}/company-a/v1`,embeddingModel:'mock-embed',fallback:'none'})).status,200);
+ await mockReset();
+ let r={remaining:1};for(let i=0;i<20&&r.remaining;i++){const x=await c.post('/api/ai',{action:'knowledge-index'});assert.equal(x.status,200,JSON.stringify(x.data));r=x.data}
+ assert.equal(r.info.available,true);assert.equal(r.info.store,'d1');assert.ok(r.info.documents>0);
+ const embedded=(await mockLog()).filter(e=>e.path==='/company-a/v1/embeddings').map(e=>e.body).join('\n');
+ assert.ok(embedded.includes('ALPHA printer jam'));assert.ok(!embedded.includes('BRAVO-SECRET'),'B records are never embedded for A');
+ assert.equal(sql(`SELECT count(*) AS n FROM knowledge_chunks WHERE tenant_id='${B.id}'`)[0].n,0);
+ // A question that shares words with an admin-only ticket: the vector hit is dropped for the restricted user.
+ await mockReset();
+ const q=await A.rita.client.stream('/api/ai',{action:'chat',message:'printer budget confidential'});assert.equal(q.status,200,q.text.slice(0,200));
+ const sent=(await mockLog()).filter(e=>e.path.endsWith('/chat/completions')).map(e=>e.body).join('\n');
+ assert.ok((await mockLog()).some(e=>e.path==='/company-a/v1/embeddings'),'the question was embedded');
+ assert.ok(!sent.includes('ADMIN-ONLY-SECRET'),'vector candidates are permission-checked');
+ await mockReset();
+ const a=await c.stream('/api/ai',{action:'chat',message:'paper stuck in the tray'});assert.equal(a.status,200);
+ assert.ok(a.done.citations.some(x=>x.link===`#/tickets/${A.ticket}`),'semantic match is cited');
+});
+
+test('27. Voice: Whisper transcription through the company or platform provider',async()=>{
+ const voice=async(client,type='audio/webm')=>{const fd=new FormData();fd.set('audio',new File([new Uint8Array(2048)],'speech.webm',{type}));const r=await fetch(`${BASE}/api/ai/voice`,{method:'POST',headers:{Origin:BASE,Cookie:client.cookie},body:fd});return {status:r.status,data:await r.json()}};
+ const a=await voice(A.admin);assert.equal(a.status,200,JSON.stringify(a.data));assert.equal(a.data.text,'hello from whisper (company-a)');
+ const b=await voice(B.admin);assert.equal(b.status,200,JSON.stringify(b.data));assert.equal(b.data.text,'hello from whisper (groq)','Groq Whisper is the default');
+ assert.equal((await voice(A.admin,'text/html')).status,415);
+ assert.equal((await voice(A.it.client)).status,403,'ONE is not on the IT role');
+ assert.ok(sql(`SELECT count(*) AS n FROM ai_usage WHERE kind='voice' AND tenant_id IN ('${A.id}','${B.id}')`)[0].n>=2);
 });

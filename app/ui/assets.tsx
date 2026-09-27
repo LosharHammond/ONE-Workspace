@@ -1,7 +1,7 @@
 'use client';
 import {useMemo,useState} from 'react';
 import {api,useApi,go,money,dateOnly,ago,cx} from './lib';
-import {useApp,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Thread,Timeline,Tabs,ErrorNote,Skeleton,Empty,KV,Card,Stat,Menu,Note,Attachments,QRCode,Icon,type Col} from './kit';
+import {useApp,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Thread,Timeline,Tabs,ErrorNote,Skeleton,Empty,KV,Card,Stat,Menu,Note,Attachments,QRCode,Icon,type Col,LookupSelect,VendorSelect} from './kit';
 import {AiActions} from './assistant';
 import {BarList} from './home';
 import {ImportGeneric} from './people';
@@ -101,7 +101,7 @@ function CheckoutDialog({asset,onClose,onDone}:{asset:Asset,onClose:()=>void,onD
 function TransferDialog({asset,onClose,onDone}:{asset:Asset,onClose:()=>void,onDone:()=>void}){
  const {toast}=useApp();const [v,setV]=useState({department:asset.department,location:asset.location,costCentre:asset.cost_centre,memberId:asset.assigned_to as string|null,note:''});const [busy,setBusy]=useState(false);
  return <Modal open onClose={onClose} title={`Transfer ${asset.code}`} subtitle="Move the asset between departments, locations or people. The previous values are kept in its history." footer={<><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn variant="primary" busy={busy} onClick={async()=>{setBusy(true);try{await api('/api/assets',{action:'transfer',id:asset.id,...v});toast('Asset transferred');onDone()}catch(e){toast((e as Error).message,'error')}finally{setBusy(false)}}}>Transfer</Btn></>}>
-  <div className="form-grid"><Field label="Department"><DeptSelect value={v.department} onChange={x=>setV({...v,department:x})}/></Field><Field label="Cost centre"><input value={v.costCentre} onChange={e=>setV({...v,costCentre:e.target.value})}/></Field><Field label="Location" wide><LocationInput value={v.location} onChange={x=>setV({...v,location:x})}/></Field><Field label="Custodian" wide><PersonSelect value={v.memberId} onChange={x=>setV({...v,memberId:x})}/></Field><Field label="Reason" wide><input value={v.note} onChange={e=>setV({...v,note:e.target.value})}/></Field></div>
+  <div className="form-grid"><Field label="Department"><DeptSelect value={v.department} onChange={x=>setV({...v,department:x})}/></Field><Field label="Cost centre"><LookupSelect list="cost-centres" label="Cost centres" value={v.costCentre} onChange={x=>setV({...v,costCentre:x})}/></Field><Field label="Location" wide><LocationInput value={v.location} onChange={x=>setV({...v,location:x})}/></Field><Field label="Custodian" wide><PersonSelect value={v.memberId} onChange={x=>setV({...v,memberId:x})}/></Field><Field label="Reason" wide><input value={v.note} onChange={e=>setV({...v,note:e.target.value})}/></Field></div>
  </Modal>;
 }
 function DisposeDialog({asset,onClose,onDone}:{asset:Asset,onClose:()=>void,onDone:()=>void}){
@@ -114,7 +114,7 @@ function DisposeDialog({asset,onClose,onDone}:{asset:Asset,onClose:()=>void,onDo
 
 function AssetForm({asset,onClose,onSaved}:{asset?:Asset,onClose:()=>void,onSaved:(id:string)=>void}){
  const {s,toast}=useApp();const [busy,setBusy]=useState(false);
- const cats=String(s.tenant.settings.assetCategories||'Laptop, Desktop, Monitor, Printer, Phone, Network, Server, CCTV, Vehicle, Furniture, Machinery, Tools').split(',').map(x=>x.trim()).filter(Boolean);
+
  const [v,setV]=useState({code:asset?.code||'',name:asset?.name||'',category:asset?.category||'',subcategory:asset?.subcategory||'',kind:asset?.kind||'IT',brand:asset?.brand||'',model:asset?.model||'',serial:asset?.serial||'',barcode:asset?.barcode||'',status:asset?.status||'In store',condition:asset?.condition||'New',location:asset?.location||'',department:asset?.department||s.user.department,costCentre:asset?.cost_centre||'',purchaseDate:asset?.purchase_date||'',purchaseCost:asset?.purchase_cost?String(asset.purchase_cost):'',usefulLifeMonths:asset?.useful_life_months?String(asset.useful_life_months):'',salvageValue:asset?.salvage_value?String(asset.salvage_value):'',warrantyUntil:asset?.warranty_until||'',vendor:asset?.vendor||'',notes:asset?.notes||''});
  const f=(k:keyof typeof v)=>(e:{target:{value:string}})=>setV({...v,[k]:e.target.value});
  return <Modal open onClose={onClose} wide title={asset?`Edit ${asset.code}`:'Register an asset'} subtitle={asset?undefined:'Leave the code blank to number it automatically; the barcode defaults to the code.'}>
@@ -123,22 +123,22 @@ function AssetForm({asset,onClose,onSaved}:{asset?:Asset,onClose:()=>void,onSave
    {!asset&&<Field label="Asset code"><input value={v.code} onChange={f('code')} placeholder="Automatic"/></Field>}
    <Field label="Barcode / QR value"><input value={v.barcode} onChange={f('barcode')} placeholder="Same as code"/></Field>
    <Field label="Type"><select value={v.kind} onChange={f('kind')}>{assetKinds.map(x=><option key={x}>{x}</option>)}</select></Field>
-   <Field label="Category"><input list="asset-cats" value={v.category} onChange={f('category')}/><datalist id="asset-cats">{cats.map(c=><option key={c} value={c}/>)}</datalist></Field>
-   <Field label="Subcategory"><input value={v.subcategory} onChange={f('subcategory')}/></Field>
-   <Field label="Brand"><input value={v.brand} onChange={f('brand')}/></Field>
+   <Field label="Category"><LookupSelect list="asset-categories" label="Asset categories" value={v.category} onChange={x=>setV({...v,category:x,subcategory:''})}/></Field>
+   <Field label="Subcategory"><LookupSelect list="asset-subcategories" label="Asset subcategories" parent={v.category} value={v.subcategory} onChange={x=>setV({...v,subcategory:x})}/></Field>
+   <Field label="Brand"><LookupSelect list="brands" label="Brands" value={v.brand} onChange={x=>setV({...v,brand:x})}/></Field>
    <Field label="Model"><input value={v.model} onChange={f('model')}/></Field>
    <Field label="Serial number"><input value={v.serial} onChange={f('serial')}/></Field>
    <Field label="Status"><select value={v.status} onChange={f('status')}>{assetStatuses.filter(x=>!['Retired','Disposed','Lost'].includes(x)||x===v.status).map(x=><option key={x}>{x}</option>)}</select></Field>
    <Field label="Condition"><select value={v.condition} onChange={f('condition')}>{assetConditions.map(x=><option key={x}>{x}</option>)}</select></Field>
    <Field label="Department"><DeptSelect value={v.department} onChange={x=>setV({...v,department:x})}/></Field>
-   <Field label="Cost centre"><input value={v.costCentre} onChange={f('costCentre')}/></Field>
+   <Field label="Cost centre"><LookupSelect list="cost-centres" label="Cost centres" value={v.costCentre} onChange={x=>setV({...v,costCentre:x})}/></Field>
    <Field label="Location" wide><LocationInput value={v.location} onChange={x=>setV({...v,location:x})}/></Field>
    <Field label="Purchase date"><input type="date" value={v.purchaseDate} onChange={f('purchaseDate')}/></Field>
    <Field label={`Purchase cost (${s.tenant.currency})`}><input type="number" min="0" step="0.01" value={v.purchaseCost} onChange={f('purchaseCost')}/></Field>
    <Field label="Useful life (months)" hint="For straight-line depreciation."><input type="number" min="0" value={v.usefulLifeMonths} onChange={f('usefulLifeMonths')}/></Field>
    <Field label={`Salvage value (${s.tenant.currency})`}><input type="number" min="0" step="0.01" value={v.salvageValue} onChange={f('salvageValue')}/></Field>
    <Field label="Warranty until"><input type="date" value={v.warrantyUntil} onChange={f('warrantyUntil')}/></Field>
-   <Field label="Vendor"><input value={v.vendor} onChange={f('vendor')}/></Field>
+   <Field label="Vendor"><VendorSelect value={v.vendor} onChange={x=>setV({...v,vendor:x})}/></Field>
    <Field label="Notes" wide><textarea rows={3} value={v.notes} onChange={f('notes')}/></Field>
    <div className="form-actions"><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn type="submit" variant="primary" busy={busy}>{asset?'Save changes':'Register asset'}</Btn></div>
   </form>

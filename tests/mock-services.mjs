@@ -13,6 +13,11 @@ createServer(async(req,res)=>{
  if(url.pathname==='/__log'){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify(log))}
  if(url.pathname==='/__reset'){log.length=0;return res.end('{}')}
  const entry={path:url.pathname,method:req.method,auth:req.headers.authorization||req.headers['x-api-key']||'',body};log.push(entry);
+ // Deterministic embeddings: hashed bag of words, so texts that share words are close.
+ if(/^\/company-a\/v1\/embeddings$/.test(url.pathname)){const d=JSON.parse(body||'{}');const vec=t=>{const v=new Array(64).fill(0);for(const w of String(t).toLowerCase().match(/[a-z0-9]{3,}/g)||[]){let h=0;for(const c of w)h=(h*31+c.charCodeAt(0))>>>0;v[h%64]+=1}return v};res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({data:(d.input||[]).map((t,i)=>({index:i,embedding:vec(t)}))}))}
+ // Whisper speech-to-text.
+ const w=/^\/(groq|company-a)\/v1\/audio\/transcriptions$/.exec(url.pathname);
+ if(w){res.setHeader('Content-Type','application/json');return res.end(JSON.stringify({text:`hello from whisper (${w[1]})`}))}
  const m=/^\/(groq|company-a)\/v1\/chat\/completions$/.exec(url.pathname);
  if(m){
   const d=JSON.parse(body||'{}');const who=m[1]==='groq'?'groq-mock':'company-a-mock';

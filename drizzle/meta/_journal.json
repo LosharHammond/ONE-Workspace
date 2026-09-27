@@ -71,6 +71,20 @@
       "when": 1790471633521,
       "tag": "0009_page_catalog_ai_connectors",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "6",
+      "when": 1790495904334,
+      "tag": "0010_lookups_knowledge",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "6",
+      "when": 1790496440909,
+      "tag": "0011_knowledge_vectors",
+      "breakpoints": true
     }
   ]
 }

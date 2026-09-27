@@ -2,6 +2,7 @@ import {hasAction} from '../access-policy';
 import {all,first,HttpError,tenantOf} from './core';
 import {canSeeTicket,canWorkTicket,canSeeDoc,type TicketRow,type PurchaseRow} from './entities';
 import {searchWorkspace,attention,contextRecord,keywords,type Hit} from './search';
+import {vectorSearch} from './knowledge';
 import type {Member} from './policy';
 
 // Reusable AI actions that pages and widgets invoke. Each action names the permission page it needs,
@@ -98,7 +99,7 @@ export async function buildAction(u:Member,a:AiActionDef,entityId:string|undefin
    break;
   }
   case 'policy.answer':case 'page.ask':{
-   if(a.id==='policy.answer')sources.push(...(await searchWorkspace(u,keywords(input),6)).filter(h=>h.type==='Page'||h.type==='File'));
+   if(a.id==='policy.answer'){const docs=(h:Hit)=>h.type==='Page'||h.type==='File'||h.type==='Announcement';const semantic=(await vectorSearch(u,input,6).catch(()=>[] as Hit[])).filter(docs);sources.push(...semantic,...(await searchWorkspace(u,keywords(input),6)).filter(h=>docs(h)&&!semantic.some(x=>x.id===h.id)))}
    break;
   }
   case 'purchase.draft':data.currency=t.currency;break;

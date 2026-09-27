@@ -1,5 +1,6 @@
 import {currentUser,configured,json,failure,all,first,tenantOf,tenantSettings,sameOrigin,readBody,HttpError,idOf,stmt,batch,sessionToken,hash,uid,now} from '../../server/core';
-import {permissionMap} from '../../access-policy';
+import {permissionMap,hasAction} from '../../access-policy';
+import {activeLookups} from '../../server/lookups';
 import {enabledModules,entitledPages} from '../../modules';
 // Boot payload for the app shell: who you are, the workspace you are acting in (always decided
 // on the server), what you can do, and the lightweight lists every picker needs.
@@ -22,6 +23,8 @@ export async function GET(req:Request){try{
   u.roleId?first<{default_screen:string}>('SELECT default_screen FROM roles WHERE id=? AND tenant_id=?',u.roleId,u.tenantId):null,
  ]);
  const settings=tenantSettings(t);
+ // Company pick lists for every form, and vendor names for people who buy or register assets.
+ const [lookups,vendors]=await Promise.all([activeLookups(u),['suppliers','procurement','requests','assets'].some(p=>hasAction(u,p))?all('SELECT id,name FROM vendors WHERE tenant_id=? ORDER BY name',u.tenantId):[]]);
  // During support the owner is shown by name even though they are not a member of this workspace.
  if(u.supportSessionId)people.push({id:u.id,name:`${u.name} (Platform support)`,email:u.email,department:'Platform support',title:'Platform Owner',role:'admin',roleId:null,location:'',active:0});
  return json({mode:'live',
@@ -29,7 +32,7 @@ export async function GET(req:Request){try{
   tenant:{id:t.id,name:t.name,legalName:t.legal_name,slug:t.slug,brandColor:t.brand_color,currency:t.currency,timezone:t.timezone,domains:t.domains,plan:t.plan,status:t.status,settings,modules:enabledModules(settings),pages:entitledPages(settings).filter(p=>!u.disabledPages?.includes(p))},
   support:support?{...support,tenantName:t.name}:null,
   memberships:u.supportSessionId?[]:memberships,
-  people,departments,locations,roles,
+  people,departments,locations,roles,lookups,vendors,
   counts:{notifications:unread?.n||0,approvals:approvals?.n||0,tickets:tickets?.n||0}});
  }catch(e){return failure(e)}}
 

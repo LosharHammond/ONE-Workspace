@@ -122,10 +122,19 @@ Status key: **Working** (existed before and still works) · **New** (implemented
 | Groq default via `GROQ_API_KEY`; model set by the Platform Owner | New | E2E | Key never stored or sent to the browser. |
 | Company provider overrides Groq for that company only | New | E2E | |
 | Floating assistant: workspace badge, streaming, citations, history, suggested prompts, page-aware context, feedback, stop, retention, usage limits | New | E2E + Manual | Ctrl+J. |
+| Assistant named **ONE**; voice input (push-to-talk, stop on silence) transcribed with Whisper (Groq by default, or the company provider); voice mode reads answers aloud; “Hello ONE” wake phrase (opt-in) | New | E2E (Whisper endpoint via mocks) + Manual | Wake phrase uses the browser’s speech recognition (Chrome/Edge/Safari; not Firefox). Audio is never stored. |
 | Permission-aware retrieval (keyword search over live records with each module's visibility rules) | New | E2E | Minimum snippets; no whole tables. |
-| Vector embeddings / workspace vector namespaces | Deferred | — | Groq has no embeddings API and no vector index is bound; retrieval is keyword-based and workspace-scoped. |
+| Vector search: embeddings (Workers AI for Groq companies, or the company provider), Vectorize namespace per workspace or per-company D1 store, incremental and rebuildable index, hybrid with keyword search, permission re-check of every hit | New | E2E (company-provider embeddings + D1 store); Workers AI + Vectorize unverified (needs `wrangler login`) | Opt-in bindings: `CF_WORKERS_AI=1`, `VECTORIZE_INDEX=…` at build time. |
 | AI actions on Home, Tickets, Assets, Purchasing, Spaces and the builder | New | E2E (triage, drafts, layout) | Suggestions are previews; applying uses the normal API after confirmation. |
 | AI activity log and usage (no prompt text stored in logs) | New | E2E | |
+
+## Company lists (migration 0010)
+
+| Feature | Status | Verified | Notes |
+|---|---|---|---|
+| Admin › Lists: ticket/asset categories and subcategories, inventory categories, units, brands, vendor categories, cost centres, job titles — add, edit, deactivate, delete, reorder, import/export, audit | New | E2E | Seeded from the old comma-separated settings on first use. |
+| Forms pick from lists (tickets, assets, inventory, purchasing, vendors, people) with inline “Add new” for admins; locations picked from the location tree with inline add | New | E2E (session) + Manual | Existing records keep values that are no longer in a list (shown as “not in list”). The server does not reject values outside a list (imports keep working). |
+| Left navigation scrolls on short screens | Fixed | Manual | Compact tiles below 820 px height, labels hidden below 640 px. |
 
 ## Deferred / limitations
 

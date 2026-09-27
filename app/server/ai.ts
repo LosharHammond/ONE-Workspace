@@ -112,7 +112,7 @@ export async function embed(p:AiProvider,texts:string[],model?:string):Promise<n
 
 // ── Limits and usage ────────────────────────────────────────────────────────
 export async function aiLimit(tenantId:string){const t=await tenantOf({tenantId});const s=tenantSettings(t);const l={...(planLimits[t.plan]||planLimits.business),...((s.limits as object)||{})} as {aiRequestsPerMonth:number};return {limit:l.aiRequestsPerMonth??planLimits.business.aiRequestsPerMonth,settings:s}}
-export async function aiUsedThisMonth(tenantId:string){const start=new Date();start.setUTCDate(1);start.setUTCHours(0,0,0,0);const r=await first<{n:number}>('SELECT count(*) AS n FROM ai_usage WHERE tenant_id=? AND created_at>=?',tenantId,start.toISOString());return r?.n||0}
+export async function aiUsedThisMonth(tenantId:string){const start=new Date();start.setUTCDate(1);start.setUTCHours(0,0,0,0);const r=await first<{n:number}>("SELECT count(*) AS n FROM ai_usage WHERE tenant_id=? AND created_at>=? AND kind<>'embed'",tenantId,start.toISOString());return r?.n||0}
 export async function assertAiQuota(tenantId:string){const {limit}=await aiLimit(tenantId);if(await aiUsedThisMonth(tenantId)>=limit)throw new AiError(429,`Your company has used its ${limit.toLocaleString()} AI requests for this month. An administrator can ask the Platform Owner to raise the limit.`,'limit')}
 // Usage rows never contain prompt or answer text.
 export function usageStatement(u:{id:string,tenantId:string},p:{id:string,model:string},kind:string,usage:AiUsage,ok=true){return stmt('INSERT INTO ai_usage(id,tenant_id,member_id,provider,model,kind,prompt_tokens,completion_tokens,ok,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)',uid(),u.tenantId,u.id,p.id,p.model,kind,usage.prompt,usage.completion,ok?1:0,now())}

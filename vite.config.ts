@@ -23,6 +23,15 @@ const localBindingConfig = {
       bucket_name: process.env.R2_BUCKET_NAME || "one-workspace-files",
     },
   ],
+  // Vector search for ONE (optional, opt-in): Workers AI supplies embeddings (Groq has none) and Vectorize
+  // stores them in one namespace per workspace. Both are Cloudflare account resources, so local development
+  // uses them remotely (requires `wrangler login`). Without them ONE falls back to keyword retrieval and D1.
+  //   CF_WORKERS_AI=1                               → binding AI
+  //   VECTORIZE_INDEX=one-workspace-knowledge       → binding VECTORIZE (768 dimensions, cosine)
+  ...(process.env.CF_WORKERS_AI === "1" ? { ai: { binding: "AI", remote: true } } : {}),
+  ...(process.env.VECTORIZE_INDEX
+    ? { vectorize: [{ binding: "VECTORIZE", index_name: process.env.VECTORIZE_INDEX, remote: true }] }
+    : {}),
 };
 
 export default defineConfig(async () => {

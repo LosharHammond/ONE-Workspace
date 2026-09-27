@@ -1,9 +1,10 @@
 'use client';
 import {useCallback,useEffect,useRef,useState} from 'react';
-import {api,useRoute,cx,ago} from './lib';
+import {api,useRoute,cx,ago,pref,setPref} from './lib';
+import {useRecorder,transcribe,useWakeWord,speak,stopSpeaking,chime} from './voice';
 import {useApp,Btn,Icon,Markdown,Modal,Note,Chip,Skeleton,Menu,ErrorNote} from './kit';
 
-// Floating, permission-aware AI assistant. Everything it knows comes from the server, which retrieves only
+// ONE: the floating, permission-aware AI assistant (voice-enabled). Everything it knows comes from the server, which retrieves only
 // records the signed-in person can open in the current workspace and cites them.
 type Citation={n:number,type:string,title:string,link:string,used?:boolean};
 type Msg={id?:string,role:'user'|'assistant',content:string,citations?:Citation[],feedback?:number,error?:boolean};
@@ -22,65 +23,88 @@ const suggestions:Record<string,string[]>={
 async function* readSse(res:Response){const reader=res.body!.getReader();const d=new TextDecoder();let buf='';while(true){const {done,value}=await reader.read();if(done)break;buf+=d.decode(value,{stream:true});let i;while((i=buf.indexOf('\n\n'))>=0){const block=buf.slice(0,i);buf=buf.slice(i+2);const ev=/^event: (.+)$/m.exec(block)?.[1]||'message';const data=/^data: (.+)$/m.exec(block)?.[1];if(data)yield {event:ev,data:JSON.parse(data)}}}}
 
 export function Assistant(){
- const {s,can}=useApp();const route=useRoute();
+ const {s,can,toast}=useApp();const route=useRoute();
  const [open,setOpen]=useState(false),[status,setStatus]=useState<AiStatus|null>(null),[err,setErr]=useState('');
  const [msgs,setMsgs]=useState<Msg[]>([]),[conv,setConv]=useState<string|null>(null),[text,setText]=useState(''),[busy,setBusy]=useState(false),[history,setHistory]=useState<{id:string,title:string,updatedAt:string}[]|null>(null);
+ // Voice: spoken replies and the "Hello ONE" wake phrase are opt-in and remembered per browser.
+ const [voiceReplies,setVoiceReplies]=useState(()=>pref('one-voice-replies',false)),[wake,setWake]=useState(()=>pref('one-wake',false)),[speaking,setSpeaking]=useState(false),[transcribing,setTranscribing]=useState(false),[showVoice,setShowVoice]=useState(false);
  const abort=useRef<AbortController|null>(null);const input=useRef<HTMLTextAreaElement>(null);const end=useRef<HTMLDivElement>(null);
+ const rec=useRecorder();
  const allowed=can('assistant','run_ai');
  useEffect(()=>{if(open&&!status)aiStatus().then(setStatus).catch(e=>setErr((e as Error).message))},[open,status]);
  useEffect(()=>{if(open)setTimeout(()=>input.current?.focus(),50)},[open]);
  useEffect(()=>{end.current?.scrollIntoView({block:'end'})},[msgs]);
- useEffect(()=>{const f=(e:KeyboardEvent)=>{if(e.key==='Escape'&&open){setOpen(false)}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='j'&&allowed){e.preventDefault();setOpen(o=>!o)}};window.addEventListener('keydown',f);return()=>window.removeEventListener('keydown',f)},[open,allowed]);
+ useEffect(()=>{const f=(e:KeyboardEvent)=>{if(e.key==='Escape'&&open){stopSpeaking();setOpen(false)}if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='j'&&allowed){e.preventDefault();setOpen(o=>!o)}};window.addEventListener('keydown',f);return()=>window.removeEventListener('keydown',f)},[open,allowed]);
  // A new workspace (switch or support session) starts a new conversation.
  useEffect(()=>{setMsgs([]);setConv(null);setHistory(null);setStatus(null)},[s.tenant.id]);
- const send=useCallback(async(q:string)=>{
-  const question=q.trim();if(!question||busy)return;setText('');setBusy(true);
+ useEffect(()=>{setPref('one-voice-replies',voiceReplies)},[voiceReplies]);useEffect(()=>{setPref('one-wake',wake)},[wake]);
+ const send=useCallback(async(q:string,spoken=false)=>{
+  const question=q.trim();if(!question||busy)return;setText('');setBusy(true);stopSpeaking();
   setMsgs(m=>[...m,{role:'user',content:question},{role:'assistant',content:''}]);
   const ctrl=new AbortController();abort.current=ctrl;
   const patch=(f:(m:Msg)=>Msg)=>setMsgs(m=>{const c=[...m];c[c.length-1]=f(c[c.length-1]);return c});
+  let answer='';
   try{
    const res=await fetch('/api/ai',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({action:'chat',message:question,conversationId:conv,page:location.hash}),signal:ctrl.signal});
-   if(!res.ok){const d=await res.json().catch(()=>({})) as {error?:string};throw new Error(d.error||'The assistant could not answer.')}
+   if(!res.ok){const d=await res.json().catch(()=>({})) as {error?:string};throw new Error(d.error||'ONE could not answer.')}
    for await(const {event,data} of readSse(res)){
     if(event==='meta')setConv(data.conversationId);
-    if(event==='delta')patch(m=>({...m,content:m.content+data.text}));
+    if(event==='delta'){answer+=data.text;patch(m=>({...m,content:m.content+data.text}))}
     if(event==='done'){patch(m=>({...m,id:data.messageId,citations:data.citations}));setStatus(st=>st?{...st,used:st.used+1,provider:data.provider,model:data.model,source:data.source}:st)}
     if(event==='error')patch(m=>({...m,content:data.error,error:true}));
    }
+   if(answer&&(voiceReplies||spoken)){setSpeaking(true);speak(answer,()=>setSpeaking(false))}
   }catch(e){if((e as Error).name==='AbortError')patch(m=>({...m,content:m.content+'\n\n_Stopped._'}));else patch(m=>({...m,content:(e as Error).message,error:true}))}
   finally{setBusy(false);abort.current=null}
- },[busy,conv]);
+ },[busy,conv,voiceReplies]);
+ // Talk to ONE: record one utterance, transcribe it with Whisper on the server, then send it.
+ const talk=useCallback(async()=>{
+  if(rec.recording){rec.stop();return}
+  stopSpeaking();setSpeaking(false);
+  try{const blob=await rec.record();if(!blob){toast('ONE did not hear anything.','info');return}setTranscribing(true);const said=await transcribe(blob);if(said)send(said,true);else toast('ONE could not make out any words.','info')}
+  catch(e){toast((e as Error).message,'error')}finally{setTranscribing(false)}
+ },[rec,send,toast]);
+ const wakeState=useWakeWord(wake&&allowed,rec.recording||speaking||busy||transcribing,()=>{setOpen(true);chime();setTimeout(()=>talk(),250)});
  async function loadHistory(){try{const d=await api<{conversations:{id:string,title:string,updatedAt:string}[]}>('/api/ai');setHistory(d.conversations)}catch(e){setErr((e as Error).message)}}
  async function openConv(id:string){try{const d=await api<{messages:Msg[]}>(`/api/ai?conversation=${id}`);setMsgs(d.messages);setConv(id);setHistory(null)}catch(e){setErr((e as Error).message)}}
  async function feedback(i:number,v:number){const m=msgs[i];if(!m.id)return;setMsgs(x=>x.map((y,j)=>j===i?{...y,feedback:v}:y));await api('/api/ai',{action:'feedback',messageId:m.id,value:v}).catch(()=>{})}
  if(!allowed)return null;
  const ideas=suggestions[route.app]||suggestions.home;
  return <>
-  {!open&&<button className="ai-fab" onClick={()=>setOpen(true)} aria-label="Open the AI assistant (Ctrl+J)" title="Ask AI (Ctrl+J)"><Icon name="Sparkles" size={20}/><span>Ask AI</span></button>}
-  {open&&<section className="ai-panel" role="dialog" aria-label="AI assistant">
+  {!open&&<button className={cx('ai-fab',wakeState.state==='listening'&&'listening')} onClick={()=>setOpen(true)} aria-label={`Open ONE, your AI assistant (Ctrl+J)${wakeState.state==='listening'?'. Listening for “Hello ONE”.':''}`} title={wakeState.state==='listening'?'Say “Hello ONE” or click (Ctrl+J)':'Ask ONE (Ctrl+J)'}><Icon name="Sparkles" size={20}/><span>Ask ONE</span>{wakeState.state==='listening'&&<i className="ai-wake-dot" aria-hidden/>}</button>}
+  {open&&<section className="ai-panel" role="dialog" aria-label="ONE, AI assistant">
    <header className="ai-head">
-    <div className="ai-title"><span className="ai-orb"><Icon name="Sparkles" size={16}/></span><div><b>Assistant</b><small title="The assistant only uses records you can open in this workspace.">Using <b>{s.tenant.name}</b> data{status?.model?` · ${status.provider} ${status.model}`:''}</small></div></div>
+    <div className="ai-title"><span className={cx('ai-orb',(rec.recording||speaking)&&'live')} style={rec.recording?{transform:`scale(${1+rec.level*.25})`}:undefined}><Icon name="Sparkles" size={16}/></span><div><b>ONE</b><small title="ONE only uses records you can open in this workspace.">Using <b>{s.tenant.name}</b> data{status?.model?` · ${status.provider} ${status.model}`:''}</small></div></div>
     <div className="ai-head-actions">
+     <Btn size="sm" variant="ghost" icon="AudioLines" title="Voice settings" onClick={()=>setShowVoice(v=>!v)}/>
      <Btn size="sm" variant="ghost" icon="History" title="Conversations" onClick={()=>history?setHistory(null):loadHistory()}/>
-     <Btn size="sm" variant="ghost" icon="Plus" title="New conversation" onClick={()=>{abort.current?.abort();setMsgs([]);setConv(null);setHistory(null)}}/>
-     <Btn size="sm" variant="ghost" icon="Minus" title="Close (Esc)" onClick={()=>setOpen(false)}/>
+     <Btn size="sm" variant="ghost" icon="Plus" title="New conversation" onClick={()=>{abort.current?.abort();stopSpeaking();setMsgs([]);setConv(null);setHistory(null)}}/>
+     <Btn size="sm" variant="ghost" icon="Minus" title="Close (Esc)" onClick={()=>{stopSpeaking();setOpen(false)}}/>
     </div>
    </header>
+   {showVoice&&<div className="ai-voice-settings">
+    <label className="check"><input type="checkbox" checked={voiceReplies} onChange={e=>{setVoiceReplies(e.target.checked);if(!e.target.checked)stopSpeaking()}}/>Voice mode: ONE reads its answers aloud</label>
+    <label className="check"><input type="checkbox" checked={wake} disabled={!wakeState.supported} onChange={e=>setWake(e.target.checked)}/>Listen for “Hello ONE” while this tab is open</label>
+    <small className="muted">{!wakeState.supported?'This browser has no speech recognition, so the wake phrase is unavailable. Use the microphone button instead.':'The wake phrase uses your browser’s speech recognition (in Chrome and Edge, audio is processed by the browser vendor). Your question is then transcribed by Whisper on One Workspace’s AI provider. Nothing is recorded until you speak to ONE, and recordings are never stored.'}{wakeState.error&&` ${wakeState.error}`}</small>
+   </div>}
    <div className="ai-body" aria-live="polite">
     {err&&<ErrorNote error={err}/>}
     {!status&&!err&&<Skeleton rows={3}/>}
     {status&&!status.configured&&<div className="ai-empty"><Icon name="Sparkles" size={26}/><h3>AI is not configured</h3><p className="muted">{s.user.role==='admin'?<>Connect an AI provider in <a href="#/admin/ai" onClick={()=>setOpen(false)}>AI settings</a>, or ask the Platform Owner to enable the platform default.</>:'Ask your administrator to connect an AI provider.'}</p></div>}
     {status?.configured&&history&&<div className="ai-history"><p className="rail-section">Recent conversations</p>{!history.length&&<p className="muted small">No saved conversations.</p>}{history.map(h=><div key={h.id} className="ai-history-row"><button className="link" onClick={()=>openConv(h.id)}>{h.title||'Conversation'}<small className="muted"> · {ago(h.updatedAt)}</small></button><Btn size="sm" variant="ghost" icon="Trash2" title="Delete" onClick={async()=>{await api('/api/ai',{action:'delete-conversation',id:h.id});setHistory(history.filter(x=>x.id!==h.id));if(conv===h.id){setMsgs([]);setConv(null)}}}/></div>)}</div>}
-    {status?.configured&&!history&&!msgs.length&&<div className="ai-welcome"><p>Ask about tickets, assets, purchasing, people, files and pages. Answers use only what <b>you</b> can open in {s.tenant.name}, with links to the sources.</p><div className="ai-suggest">{ideas.map(q=><button key={q} className="chip-btn" onClick={()=>send(q)}>{q}</button>)}</div><small className="muted">{status.used.toLocaleString()} of {status.limit.toLocaleString()} AI requests used this month · {status.source==='company'?'Company AI provider':'Platform default (Groq)'}</small></div>}
+    {status?.configured&&!history&&!msgs.length&&<div className="ai-welcome"><p>Hi, I’m <b>ONE</b>. Ask about tickets, assets, purchasing, people, files and pages, by typing or with the microphone. I only use what <b>you</b> can open in {s.tenant.name}, and I link to my sources.</p><div className="ai-suggest">{ideas.map(q=><button key={q} className="chip-btn" onClick={()=>send(q)}>{q}</button>)}</div><small className="muted">{status.used.toLocaleString()} of {status.limit.toLocaleString()} AI requests used this month · {status.source==='company'?'Company AI provider':'Platform default (Groq)'}</small></div>}
     {status?.configured&&!history&&msgs.map((m,i)=><div key={i} className={cx('ai-msg',m.role,m.error&&'error')}>
      {m.role==='assistant'?(m.content?<Markdown text={m.content}/>:<span className="ai-typing"><i/><i/><i/></span>):<p>{m.content}</p>}
      {!!m.citations?.length&&<div className="ai-cites">{m.citations.map(c=><a key={c.n} href={c.link} className="ai-cite" title={c.title} onClick={()=>{if(window.innerWidth<700)setOpen(false)}}><b>S{c.n}</b>{c.type} · {c.title}</a>)}</div>}
-     {m.role==='assistant'&&m.id&&<div className="ai-feedback"><button aria-label="Helpful" className={cx(m.feedback===1&&'on')} onClick={()=>feedback(i,m.feedback===1?0:1)}><Icon name="ThumbsUp" size={14}/></button><button aria-label="Not helpful" className={cx(m.feedback===-1&&'on')} onClick={()=>feedback(i,m.feedback===-1?0:-1)}><Icon name="ThumbsDown" size={14}/></button></div>}
+     {m.role==='assistant'&&m.id&&<div className="ai-feedback"><button aria-label="Helpful" className={cx(m.feedback===1&&'on')} onClick={()=>feedback(i,m.feedback===1?0:1)}><Icon name="ThumbsUp" size={14}/></button><button aria-label="Not helpful" className={cx(m.feedback===-1&&'on')} onClick={()=>feedback(i,m.feedback===-1?0:-1)}><Icon name="ThumbsDown" size={14}/></button><button aria-label="Read aloud" onClick={()=>{setSpeaking(true);speak(m.content,()=>setSpeaking(false))}}><Icon name="AudioLines" size={14}/></button></div>}
     </div>)}
+    {(rec.recording||transcribing)&&<div className="ai-listening" role="status"><span className="ai-meter"><i style={{transform:`scaleY(${.2+rec.level})`}}/><i style={{transform:`scaleY(${.2+rec.level*.7})`}}/><i style={{transform:`scaleY(${.2+rec.level*.9})`}}/></span>{rec.recording?'Listening… stop talking to send, or press the microphone.':'Transcribing with Whisper…'}</div>}
+    {speaking&&<div className="ai-listening" role="status"><Icon name="AudioLines" size={15}/>Speaking… <button className="link" onClick={()=>{stopSpeaking();setSpeaking(false)}}>Stop</button></div>}
     <div ref={end}/>
    </div>
    {status?.configured&&<form className="ai-input" onSubmit={e=>{e.preventDefault();send(text)}}>
-    <textarea ref={input} rows={2} value={text} placeholder={`Ask about ${s.tenant.name}…`} aria-label="Message the assistant" onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send(text)}}}/>
+    <textarea ref={input} rows={2} value={text} placeholder={`Ask ONE about ${s.tenant.name}…`} aria-label="Message ONE" onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();send(text)}}}/>
+    <Btn icon={rec.recording?'Square':'Mic'} variant={rec.recording?'primary':'default'} busy={transcribing} disabled={busy} title={rec.recording?'Stop and send':'Talk to ONE'} onClick={talk}/>
     {busy?<Btn icon="CircleX" onClick={()=>abort.current?.abort()} title="Stop">Stop</Btn>:<Btn type="submit" variant="primary" icon="Send" disabled={!text.trim()} title="Send (Enter)"/>}
    </form>}
   </section>}

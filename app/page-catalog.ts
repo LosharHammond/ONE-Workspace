@@ -33,7 +33,7 @@ export const pageCatalog:CatalogPage[]=[
  P('it','IT & CCTV storage monitoring.','HardDrive','ops/it','operations','business'),
  P('research','Consumer research recordings and AI summaries.','FlaskConical','ops/research','operations','enterprise'),
  P('company-data','Data hub: imported registers and promotion to live records.','DatabaseZap','admin/data','data','enterprise'),
- P('assistant','Floating AI assistant and AI actions on every page.','Sparkles','home','ai','starter'),
+ P('assistant','ONE, the floating voice-enabled AI assistant, and AI actions on every page.','Sparkles','home','ai','starter'),
  P('connectors','Connector Center: Microsoft, Google, REST, webhooks and MCP servers.','Link','admin/connectors','integrations','business'),
  P('app-pages','Custom pages built with the visual page and widget builder.','LayoutGrid','pages','builder','business'),
  // Platform-only pages: never assignable to a company.
@@ -52,7 +52,7 @@ export type PagePackage={id:string,name:string,description:string,pages:string[]
 const starter=['people','locations','maintenance','assets','knowledge','documents','assistant'];
 const business=[...starter,'schedules','inventory','requests','procurement','suppliers','receipts','budgets','reports','it','connectors','app-pages'];
 export const defaultPackages:PagePackage[]=[
- {id:'starter',name:'Starter',description:'Help desk, assets, people, spaces, files and the AI assistant.',pages:starter},
+ {id:'starter',name:'Starter',description:'Help desk, assets, people, spaces, files and ONE, the AI assistant.',pages:starter},
  {id:'business',name:'Business',description:'Starter plus purchasing, inventory, maintenance, reports, connectors and the page builder.',pages:business},
  {id:'enterprise',name:'Enterprise',description:'Every company page.',pages:[...assignablePages]},
 ];

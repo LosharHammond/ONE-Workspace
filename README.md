@@ -55,6 +55,8 @@ All schema changes are additive migrations in `drizzle/`; nothing is dropped or 
 - `0007_platform_owner.sql` — the operator's own workspace ("One Workspace HQ") and the owner membership, **without a password**.
 - `0008_saas_platform.sql` — identities, credentials, one-time tokens, support sessions, platform audit, saved views, asset audits, inventory, maintenance, quotations, budgets, and new columns; backfills identities and credentials from existing members.
 - `0009_page_catalog_ai_connectors.sql` — `roles.pages_json` (role page lists), `platform_settings` (catalog overrides, packages, AI default), `ai_providers`, `ai_conversations`, `ai_messages`, `ai_usage`, `connectors`, `connector_logs`, `oauth_states`, `app_pages`, `app_page_versions`, `page_templates`. Additive only.
+- `0010_lookups_knowledge.sql` — `lookups` (company pick lists) and `knowledge_documents` (knowledge index bookkeeping).
+- `0011_knowledge_vectors.sql` — `knowledge_chunks` (per-company vectors when Vectorize is not bound), `ai_providers.embedding_model`, index metadata columns.
 
 ## Pages, roles, AI and connectors
 
@@ -62,7 +64,21 @@ All schema changes are additive migrations in `drizzle/`; nothing is dropped or 
 - **Roles**: Company Admins limit each role to a subset of their company's pages (Admin › Roles & permissions › Pages), set actions and record scopes, and can **Preview as this role**.
 - **Page builder** (Pages app): drag-and-drop sections, rows, columns and tabs of approved widgets; draft → preview → publish, version history, compare, rollback, templates. A page with the address `home` appears on Home.
 - **Connector Center** (Admin › Connectors; Platform › Connectors & AI for global app registrations): REST, OAuth 2.0 (Microsoft, Google, generic), signed webhooks and MCP servers, restricted by page and role.
-- **AI**: Groq by default; a company can connect its own provider in Admin › AI settings. The floating assistant (Ctrl+J) and AI actions retrieve only what the person asking can open in the current workspace, cite sources, and never change data without a preview and confirmation.
+- **AI**: Groq by default; a company can connect its own provider in Admin › AI settings. The floating assistant, **ONE** (Ctrl+J), and AI actions retrieve only what the person asking can open in the current workspace, cite sources, and never change data without a preview and confirmation.
+- **Voice**: the microphone in ONE records one question, stops on silence, and transcribes it with **Whisper** (Groq `whisper-large-v3-turbo` by default, or the company's own OpenAI/Azure/compatible provider). Audio is never stored. *Voice mode* reads answers aloud. *Listen for “Hello ONE”* (off by default, per browser) wakes ONE hands-free using the browser's speech recognition (Chrome, Edge, Safari).
+- **Vector search**: Groq has no embeddings API, so ONE's embeddings come from **Cloudflare Workers AI** (`@cf/baai/bge-base-en-v1.5`) and are stored in **Cloudflare Vectorize**, one namespace per company. A company can instead use its own provider's embeddings (set an embedding model in AI settings); without either, vectors are kept in D1 per company, or ONE uses keyword search only. Every vector hit is re-checked against the asking person's permissions.
+- **Lists** (Admin › Lists): ticket/asset categories and subcategories, inventory categories, units, brands, vendor categories, cost centres and job titles are maintained once and offered as choices in every form; locations, departments and vendors are picked from their own managers. Admins can add a value straight from a dropdown.
+
+### Turning on vector search (Cloudflare)
+
+```bash
+npx wrangler login
+npx wrangler vectorize create one-workspace-knowledge --dimensions=768 --metric=cosine
+CF_WORKERS_AI=1 VECTORIZE_INDEX=one-workspace-knowledge D1_DATABASE_ID=<database_id> npm run build
+npm run deploy
+```
+
+Then open **Admin › AI settings › Knowledge index › Rebuild** once per company (new and changed records are indexed automatically afterwards). For local development the same variables work with `npm run dev`; Workers AI and Vectorize are used remotely and require `wrangler login`.
 
 ## Platform Owner first sign-in
 

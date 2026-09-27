@@ -1,7 +1,7 @@
 'use client';
 import {useEffect,useMemo,useState,type ReactNode} from 'react';
 import {api,useApi,go,ago,dateOnly,readXlsx,parseCsv,sheetObjects,cx,downloadCsv} from './lib';
-import {useApp,TagPicker,Timeline,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Avatar,ErrorNote,Skeleton,Empty,KV,Card,Icon,Note,Segmented,Menu,type Col} from './kit';
+import {useApp,TagPicker,Timeline,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Avatar,ErrorNote,Skeleton,Empty,KV,Card,Icon,Note,Segmented,Menu,type Col,LookupSelect} from './kit';
 import {baseRoleLabels} from '../access-policy';
 
 type Member={id:string,name:string,email:string,role:string,role_id:string|null,department:string,title:string,phone:string,location:string,additional_locations:string[],manager_id:string|null,employee_code:string,active:number,status:'Active'|'Invited'|'Disabled',last_seen_at:string|null,created_at:string,updated_at:string|null,updated_by:string|null,manageable?:boolean};
@@ -160,7 +160,7 @@ function PersonEditor({m,onClose,onSaved,onLink,onActivity}:{m?:Member,onClose:(
   <form className="form-grid" onSubmit={async e=>{e.preventDefault();setBusy(true);try{const body={...v,roleId:v.roleId||null};const r=await api<any>('/api/people',m?{action:'update',id:m.id,...body}:{action:'create',...body});toast(m?'Member updated':r.note||(r.emailed?`Invitation emailed to ${v.email}`:'Invitation created'));onSaved(m?undefined:{...r,name:v.name,email:v.email})}catch(err){toast((err as Error).message,'error')}finally{setBusy(false)}}}>
    <Field label="Full name" wide><input required value={v.name} onChange={f('name')}/></Field>
    <Field label="Email" wide hint={m?'Email identifies the account and cannot be changed here.':s.tenant.domains?`Company domains: ${s.tenant.domains}`:undefined}><input required type="email" disabled={!!m} value={v.email} onChange={f('email')}/></Field>
-   <Field label="Job title"><input value={v.title} onChange={f('title')}/></Field>
+   <Field label="Job title"><LookupSelect list="job-titles" label="Job titles" value={v.title} onChange={x=>setV({...v,title:x})}/></Field>
    <Field label="Phone"><input value={v.phone} onChange={f('phone')}/></Field>
    <Field label="Department"><DeptSelect value={v.department} required onChange={x=>setV({...v,department:x})}/></Field>
    <Field label="Employee code"><input value={v.employeeCode} onChange={f('employeeCode')}/></Field>

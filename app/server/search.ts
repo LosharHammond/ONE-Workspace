@@ -13,35 +13,50 @@ const STOP=new Set('the and for with that this what which who whom whose when wh
 export function keywords(q:string,max=6){return [...new Set(q.toLowerCase().replace(/[^\p{L}\p{N}\s-]/gu,' ').split(/\s+/).filter(w=>w.length>=3&&!STOP.has(w)))].slice(0,max)}
 function score(terms:string[],title:string,text:string){const t=title.toLowerCase(),x=text.toLowerCase();return terms.reduce((n,w)=>n+(t.includes(w)?3:0)+(x.includes(w)?1:0),0)}
 
+// Source types shared by search, the knowledge index and vector retrieval.
+export type SourceType='person'|'ticket'|'doc'|'asset'|'page'|'file'|'vendor'|'item'|'order';
+type Clause={sql:string,binds:string[]}|null;
+// Loads matching records of every type the person may see, with each module's visibility rule applied.
+// `clause(type,cols,idCol)` returns the WHERE fragment for that type, or null to skip the type.
+async function collect(u:Member,clause:(type:SourceType,cols:string[],idCol:string)=>Clause,limit:number):Promise<Hit[]>{
+ const c={person:clause('person',['name','email','title','department'],'id'),asset:clause('asset',['name','code','serial','model','category','location','notes'],'id'),ticket:clause('ticket',['title','number','description','category'],'id'),doc:clause('doc',['d.title','d.number','d.justification'],'d.id'),file:clause('file',['name','tags','description'],'id'),page:clause('page',['title','body'],'id'),vendor:clause('vendor',['name','category'],'id'),item:clause('item',['i.name','i.sku','i.category'],'i.id'),order:clause('order',['title','number','description'],'id')};
+ const q=<T,>(ok:boolean,cl:Clause,sql:(w:string)=>string):Promise<T[]>=>ok&&cl?all<T>(sql(cl.sql),u.tenantId,...cl.binds):Promise.resolve([]);
+ const [people,assets,tickets,docs,files,pages,vendors,items,orders]=await Promise.all([
+  q<{id:string,name:string,email:string,department:string,title:string,phone:string,location:string}>(hasAction(u,'people'),c.person,w=>`SELECT id,name,email,department,title,phone,location FROM members WHERE tenant_id=? AND active=1 AND ${w} LIMIT ${Math.min(limit,20)}`),
+  q<AssetRow>(true,c.asset,w=>`SELECT * FROM assets WHERE tenant_id=? AND ${w} LIMIT ${limit}`),
+  q<TicketRow>(true,c.ticket,w=>`SELECT * FROM tickets WHERE tenant_id=? AND ${w} ORDER BY created_at DESC LIMIT ${limit}`),
+  q<PurchaseRow>(true,c.doc,w=>`SELECT d.*,(SELECT group_concat(j.value) FROM approvals a, json_each(a.approver_ids) j WHERE a.doc_id=d.id AND a.tenant_id=d.tenant_id) AS approver_ids FROM purchase_docs d WHERE d.tenant_id=? AND ${w} ORDER BY d.created_at DESC LIMIT ${limit}`),
+  q<FileRow>(true,c.file,w=>`SELECT * FROM files WHERE tenant_id=? AND ${w} LIMIT ${limit}`),
+  q<PageRow>(true,c.page,w=>`SELECT * FROM pages WHERE tenant_id=? AND ${w} LIMIT ${limit}`),
+  q<{id:string,name:string,category:string,email:string,phone:string}>(hasAction(u,'suppliers'),c.vendor,w=>`SELECT id,name,category,email,phone FROM vendors WHERE tenant_id=? AND ${w} LIMIT ${Math.min(limit,20)}`),
+  q<{id:string,sku:string,name:string,category:string,unit:string,min_stock:number,qty:number}>(hasAction(u,'inventory'),c.item,w=>`SELECT i.id,i.sku,i.name,i.category,i.unit,i.min_stock,(SELECT coalesce(sum(s.qty),0) FROM stock_levels s WHERE s.item_id=i.id AND s.tenant_id=i.tenant_id) AS qty FROM inventory_items i WHERE i.tenant_id=? AND ${w} LIMIT ${Math.min(limit,20)}`).catch(()=>[]),
+  q<{id:string,number:string,title:string,description:string,status:string,department:string,assignee_id:string|null,created_by:string,due_at:string|null}>(hasAction(u,'schedules'),c.order,w=>`SELECT id,number,title,description,status,department,assignee_id,created_by,due_at FROM work_orders WHERE tenant_id=? AND ${w} ORDER BY created_at DESC LIMIT ${limit}`),
+ ]);
+ return [
+  ...people.map(p=>({type:'Person',id:p.id,title:p.name,sub:[p.title,p.department,p.email].filter(Boolean).join(' · '),link:`#/people/directory/${p.id}`,text:`${p.name}; ${p.title||''}; department ${p.department}; ${p.email}; ${p.location||''}`,score:0})),
+  ...tickets.filter(t=>canSeeTicket(u,t)).map(t=>({type:'Ticket',id:t.id,title:`${t.number} · ${t.title}`,sub:`${t.status} · ${t.priority}`,link:`#/tickets/${t.id}`,text:`Ticket ${t.number} "${t.title}". Status ${t.status}, priority ${t.priority}, category ${t.category||'—'}, department ${t.department}, created ${t.created_at.slice(0,10)}${t.due_at?`, due ${t.due_at.slice(0,16)}`:''}. ${clip(t.description,500)}`,score:0})),
+  ...docs.filter(d=>canSeeDoc(u,d)).map(d=>({type:d.kind==='PR'?'Requisition':'Purchase order',id:d.id,title:`${d.number} · ${d.title}`,sub:d.status,link:`#/purchasing/${d.kind.toLowerCase()}/${d.id}`,text:`${d.kind} ${d.number} "${d.title}". Status ${d.status}, total ${d.currency} ${d.total}, department ${d.department}, created ${d.created_at.slice(0,10)}. ${clip(d.justification,400)}`,score:0})),
+  ...assets.filter(a=>canSeeAsset(u,a)).map(a=>({type:'Asset',id:a.id,title:`${a.code} · ${a.name}`,sub:`${a.status}${a.location?' · '+a.location:''}`,link:`#/assets/${a.id}`,text:`Asset ${a.code} "${a.name}". Category ${a.category}, status ${a.status}, condition ${a.condition||'—'}, location ${a.location||'—'}, department ${a.department||'—'}, ${a.brand||''} ${a.model||''} serial ${a.serial||'—'}, purchased ${a.purchase_date||'—'}, warranty until ${a.warranty_until||'—'}. ${clip(a.notes,200)}`,score:0})),
+  ...pages.filter(p=>canSeePage(u,p)).map(p=>({type:'Page',id:p.id,title:p.title,sub:p.department||'Company',link:`#/spaces/page/${p.id}`,text:`${p.kind==='announcement'?'Announcement':'Page'} "${p.title}" (${p.department||'Company'}, ${p.status}, updated ${p.updated_at.slice(0,10)}): ${clip(p.body,1200)}`,score:0})),
+  ...files.filter(f=>canSeeFile(u,f)).map(f=>({type:'File',id:f.id,title:f.name,sub:f.department||'Company files',link:`#/files/${f.folder_id||'root'}/${f.id}`,text:`File "${f.name}" (${f.mime}, ${f.department||'company'}, tags ${f.tags||'—'}): ${clip(f.description,300)}`,score:0})),
+  ...vendors.map(v=>({type:'Vendor',id:v.id,title:v.name,sub:v.category||'Vendor',link:`#/purchasing/vendors/${v.id}`,text:`Vendor ${v.name}; category ${v.category||'—'}; ${v.email||''} ${v.phone||''}`,score:0})),
+  ...items.map(i=>({type:'Stock item',id:i.id,title:`${i.sku} · ${i.name}`,sub:`${i.qty} ${i.unit} in stock`,link:`#/inventory/items/${i.id}`,text:`Stock item ${i.sku} "${i.name}", category ${i.category}, ${i.qty} ${i.unit} on hand, reorder level ${i.min_stock}${i.qty<=i.min_stock?' (below reorder level)':''}`,score:0})),
+  ...orders.filter(o=>o.assignee_id===u.id||canActOn(u,'schedules','view',o.department||u.department,o.created_by)).map(o=>({type:'Work order',id:o.id,title:`${o.number} · ${o.title}`,sub:o.status,link:`#/maintenance/orders/${o.id}`,text:`Work order ${o.number} "${o.title}", status ${o.status}${o.due_at?`, due ${o.due_at.slice(0,10)}`:''}. ${clip(o.description,300)}`,score:0})),
+ ];
+}
+function perTypeCap(hits:Hit[],perType:number){const byType=new Map<string,number>();return hits.filter(h=>{const n=byType.get(h.type)||0;if(n>=perType)return false;byType.set(h.type,n+1);return true})}
+// Keyword search.
 export async function searchWorkspace(u:Member,terms:string[],perType=8):Promise<Hit[]>{
  if(!terms.length)return [];
- const q=(cols:string[])=>where(cols,terms);
- const w={people:q(['name','email','title','department']),assets:q(['name','code','serial','model','category','location','notes']),tickets:q(['title','number','description','category']),docs:q(['d.title','d.number','d.justification']),files:q(['name','tags','description']),pages:q(['title','body']),vendors:q(['name','category']),items:q(['name','sku','category']),orders:q(['title','number','description'])};
- const [people,assets,tickets,docs,files,pages,vendors,items,orders]=await Promise.all([
-  hasAction(u,'people')?all<{id:string,name:string,email:string,department:string,title:string,phone:string,location:string}>(`SELECT id,name,email,department,title,phone,location FROM members WHERE tenant_id=? AND active=1 AND ${w.people.sql} LIMIT 12`,u.tenantId,...w.people.binds):[],
-  all<AssetRow>(`SELECT * FROM assets WHERE tenant_id=? AND ${w.assets.sql} LIMIT 60`,u.tenantId,...w.assets.binds),
-  all<TicketRow>(`SELECT * FROM tickets WHERE tenant_id=? AND ${w.tickets.sql} ORDER BY created_at DESC LIMIT 60`,u.tenantId,...w.tickets.binds),
-  all<PurchaseRow>(`SELECT d.*,(SELECT group_concat(j.value) FROM approvals a, json_each(a.approver_ids) j WHERE a.doc_id=d.id AND a.tenant_id=d.tenant_id) AS approver_ids FROM purchase_docs d WHERE d.tenant_id=? AND ${w.docs.sql} ORDER BY d.created_at DESC LIMIT 60`,u.tenantId,...w.docs.binds),
-  all<FileRow>(`SELECT * FROM files WHERE tenant_id=? AND ${w.files.sql} LIMIT 60`,u.tenantId,...w.files.binds),
-  all<PageRow>(`SELECT * FROM pages WHERE tenant_id=? AND ${w.pages.sql} LIMIT 60`,u.tenantId,...w.pages.binds),
-  hasAction(u,'suppliers')?all<{id:string,name:string,category:string,email:string,phone:string}>(`SELECT id,name,category,email,phone FROM vendors WHERE tenant_id=? AND ${w.vendors.sql} LIMIT 10`,u.tenantId,...w.vendors.binds):[],
-  hasAction(u,'inventory')?all<{id:string,sku:string,name:string,category:string,unit:string,min_stock:number,qty:number}>(`SELECT i.id,i.sku,i.name,i.category,i.unit,i.min_stock,(SELECT coalesce(sum(s.qty),0) FROM stock_levels s WHERE s.item_id=i.id AND s.tenant_id=i.tenant_id) AS qty FROM inventory_items i WHERE i.tenant_id=? AND ${w.items.sql.replace(/\bname\b/g,'i.name').replace(/\bsku\b/g,'i.sku').replace(/\bcategory\b/g,'i.category')} LIMIT 12`,u.tenantId,...w.items.binds).catch(()=>[]):[],
-  hasAction(u,'schedules')?all<{id:string,number:string,title:string,description:string,status:string,department:string,assignee_id:string|null,created_by:string,due_at:string|null}>(`SELECT id,number,title,description,status,department,assignee_id,created_by,due_at FROM work_orders WHERE tenant_id=? AND ${w.orders.sql} ORDER BY created_at DESC LIMIT 30`,u.tenantId,...w.orders.binds):[],
- ]);
- const hits:Hit[]=[
-  ...people.map(p=>({type:'Person',id:p.id,title:p.name,sub:[p.title,p.department,p.email].filter(Boolean).join(' · '),link:`#/people/directory/${p.id}`,text:`${p.name}; ${p.title||''}; department ${p.department}; ${p.email}; ${p.location||''}`})),
-  ...tickets.filter(t=>canSeeTicket(u,t)).map(t=>({type:'Ticket',id:t.id,title:`${t.number} · ${t.title}`,sub:`${t.status} · ${t.priority}`,link:`#/tickets/${t.id}`,text:`Ticket ${t.number} "${t.title}". Status ${t.status}, priority ${t.priority}, category ${t.category||'—'}, department ${t.department}, created ${t.created_at.slice(0,10)}${t.due_at?`, due ${t.due_at.slice(0,16)}`:''}. ${clip(t.description,500)}`})),
-  ...docs.filter(d=>canSeeDoc(u,d)).map(d=>({type:d.kind==='PR'?'Requisition':'Purchase order',id:d.id,title:`${d.number} · ${d.title}`,sub:d.status,link:`#/purchasing/${d.kind.toLowerCase()}/${d.id}`,text:`${d.kind} ${d.number} "${d.title}". Status ${d.status}, total ${d.currency} ${d.total}, department ${d.department}, created ${d.created_at.slice(0,10)}. ${clip(d.justification,400)}`})),
-  ...assets.filter(a=>canSeeAsset(u,a)).map(a=>({type:'Asset',id:a.id,title:`${a.code} · ${a.name}`,sub:`${a.status}${a.location?' · '+a.location:''}`,link:`#/assets/${a.id}`,text:`Asset ${a.code} "${a.name}". Category ${a.category}, status ${a.status}, condition ${a.condition||'—'}, location ${a.location||'—'}, department ${a.department||'—'}, ${a.brand||''} ${a.model||''} serial ${a.serial||'—'}, purchased ${a.purchase_date||'—'}, warranty until ${a.warranty_until||'—'}. ${clip(a.notes,200)}`})),
-  ...pages.filter(p=>canSeePage(u,p)).map(p=>({type:'Page',id:p.id,title:p.title,sub:p.department||'Company',link:`#/spaces/page/${p.id}`,text:`${p.kind==='announcement'?'Announcement':'Page'} "${p.title}" (${p.department||'Company'}, ${p.status}, updated ${p.updated_at.slice(0,10)}): ${clip(p.body,1200)}`})),
-  ...files.filter(f=>canSeeFile(u,f)).map(f=>({type:'File',id:f.id,title:f.name,sub:f.department||'Company files',link:`#/files/${f.folder_id||'root'}/${f.id}`,text:`File "${f.name}" (${f.mime}, ${f.department||'company'}, tags ${f.tags||'—'}): ${clip(f.description,300)}`})),
-  ...vendors.map(v=>({type:'Vendor',id:v.id,title:v.name,sub:v.category||'Vendor',link:`#/purchasing/vendors/${v.id}`,text:`Vendor ${v.name}; category ${v.category||'—'}; ${v.email||''} ${v.phone||''}`})),
-  ...items.map(i=>({type:'Stock item',id:i.id,title:`${i.sku} · ${i.name}`,sub:`${i.qty} ${i.unit} in stock`,link:`#/inventory/items/${i.id}`,text:`Stock item ${i.sku} "${i.name}", category ${i.category}, ${i.qty} ${i.unit} on hand, reorder level ${i.min_stock}${i.qty<=i.min_stock?' (below reorder level)':''}`})),
-  ...orders.filter(o=>o.assignee_id===u.id||canActOn(u,'schedules','view',o.department||u.department,o.created_by)).map(o=>({type:'Work order',id:o.id,title:`${o.number} · ${o.title}`,sub:o.status,link:`#/maintenance/orders/${o.id}`,text:`Work order ${o.number} "${o.title}", status ${o.status}${o.due_at?`, due ${o.due_at.slice(0,10)}`:''}. ${clip(o.description,300)}`})),
- ].map(h=>({...h,score:score(terms,h.title,h.text)}));
- // Best matches first, at most perType of each kind.
- const byType=new Map<string,number>();
- return hits.sort((a,b)=>b.score-a.score).filter(h=>{const n=byType.get(h.type)||0;if(n>=perType)return false;byType.set(h.type,n+1);return true});
+ const hits=await collect(u,(_t,cols)=>where(cols,terms),60);
+ return perTypeCap(hits.map(h=>({...h,score:score(terms,h.title,h.text)})).sort((a,b)=>b.score-a.score),perType);
+}
+// Specific records (e.g. vector-search candidates), each re-checked with the person's own permissions.
+export async function hitsByIds(u:Member,refs:{type:SourceType,id:string,score:number}[]):Promise<Hit[]>{
+ const ids=new Map<SourceType,string[]>();for(const r of refs)ids.set(r.type,[...(ids.get(r.type)||[]),r.id]);
+ const hits=await collect(u,(t,_c,idCol)=>{const list=(ids.get(t)||[]).slice(0,50);return list.length?{sql:`${idCol} IN (${list.map(()=>'?').join(',')})`,binds:list}:null},50);
+ const scoreOf=new Map(refs.map(r=>[r.id,r.score]));
+ return hits.map(h=>({...h,score:scoreOf.get(h.id)||0})).sort((a,b)=>b.score-a.score);
 }
 
 // What needs this person's attention, computed with their own permissions.

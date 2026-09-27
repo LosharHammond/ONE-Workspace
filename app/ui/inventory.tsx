@@ -1,7 +1,7 @@
 'use client';
 import {useState} from 'react';
 import {api,useApi,go,money,dateTime} from './lib';
-import {useApp,Btn,Chip,Header,Grid,Inspector,Modal,Field,LocationInput,ErrorNote,Skeleton,Empty,KV,Stat,Note,Who,type Col} from './kit';
+import {useApp,Btn,Chip,Header,Grid,Inspector,Modal,Field,LocationInput,ErrorNote,Skeleton,Empty,KV,Stat,Note,Who,type Col,LookupSelect} from './kit';
 import {ImportGeneric} from './people';
 
 type Item={id:string,sku:string,name:string,category:string,unit:string,min_stock:number,reorder_qty:number,tracking:string,unit_cost:number,status:string,notes:string,on_hand:number,locations:number};
@@ -79,12 +79,12 @@ function MoveDialog({item,type,levels,onClose,onDone}:{item:Item,type:string,lev
  </Modal>;
 }
 function ItemForm({item,onClose,onSaved}:{item?:Item,onClose:()=>void,onSaved:(id:string)=>void}){
- const {s,toast}=useApp();const cats=String(s.tenant.settings.inventoryCategories||'').split(',').map(x=>x.trim()).filter(Boolean);const [busy,setBusy]=useState(false);
+ const {s,toast}=useApp();const [busy,setBusy]=useState(false);
  const [v,setV]=useState({sku:item?.sku||'',name:item?.name||'',category:item?.category||'',unit:item?.unit||'ea',minStock:String(item?.min_stock??''),reorderQty:String(item?.reorder_qty??''),unitCost:String(item?.unit_cost??''),tracking:item?.tracking||'none',status:item?.status||'Active',notes:item?.notes||'',openingQty:'',openingLocation:''});
  const f=(k:keyof typeof v)=>(e:{target:{value:string}})=>setV({...v,[k]:e.target.value});
  return <Modal open wide onClose={onClose} title={item?`Edit ${item.sku}`:'New stock item'}><form className="form-grid" onSubmit={async e=>{e.preventDefault();setBusy(true);try{const r=await api<{id:string}>('/api/inventory',{action:'item',id:item?.id,...v});toast(item?'Item updated':'Item created');onSaved(r.id)}catch(err){toast((err as Error).message,'error')}finally{setBusy(false)}}}>
   <Field label="SKU"><input required autoFocus value={v.sku} onChange={f('sku')}/></Field><Field label="Name"><input required value={v.name} onChange={f('name')}/></Field>
-  <Field label="Category"><input list="inv-cats" value={v.category} onChange={f('category')}/><datalist id="inv-cats">{cats.map(c=><option key={c} value={c}/>)}</datalist></Field><Field label="Unit"><input value={v.unit} onChange={f('unit')} placeholder="ea, box, kg…"/></Field>
+  <Field label="Category"><LookupSelect list="inventory-categories" label="Inventory categories" value={v.category} onChange={x=>setV({...v,category:x})}/></Field><Field label="Unit"><LookupSelect list="units" label="Units of measure" value={v.unit} onChange={x=>setV({...v,unit:x})}/></Field>
   <Field label="Minimum stock" hint="Reorder alert at or below this."><input type="number" min="0" step="any" value={v.minStock} onChange={f('minStock')}/></Field><Field label="Reorder quantity"><input type="number" min="0" step="any" value={v.reorderQty} onChange={f('reorderQty')}/></Field>
   <Field label={`Unit cost (${s.tenant.currency})`}><input type="number" min="0" step="0.01" value={v.unitCost} onChange={f('unitCost')}/></Field><Field label="Tracking"><select value={v.tracking} onChange={f('tracking')}><option value="none">Quantity only</option><option value="batch">Batch numbers</option><option value="serial">Serial numbers</option></select></Field>
   {item&&<Field label="Status"><select value={v.status} onChange={f('status')}><option>Active</option><option>Inactive</option></select></Field>}
