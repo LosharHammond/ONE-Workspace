@@ -156,3 +156,9 @@ export function QRCode({value,size=132}:{value:string,size?:number}){
  const svg=useMemo(()=>{const qr=qrcode(0,'M');qr.addData(value);qr.make();const n=qr.getModuleCount();let d='';for(let r=0;r<n;r++)for(let c=0;c<n;c++)if(qr.isDark(r,c))d+=`M${c} ${r}h1v1h-1z`;return {n,d}},[value]);
  return <svg className="qr" width={size} height={size} viewBox={`-2 -2 ${svg.n+4} ${svg.n+4}`} role="img" aria-label={`QR code for ${value}`}><rect x="-2" y="-2" width={svg.n+4} height={svg.n+4} fill="#fff"/><path d={svg.d} fill="#000"/></svg>;
 }
+
+// Multi-value picker with suggestions (departments, locations, categories…).
+export function TagPicker({values,options,onChange,placeholder}:{values:string[],options:string[],onChange:(v:string[])=>void,placeholder:string}){
+ const [q,setQ]=useState('');const list=options.filter(o=>!values.includes(o)&&o.toLowerCase().includes(q.toLowerCase())).slice(0,8);
+ return <><div className="tag-input">{values.map(v=><span key={v} className="tag">{v}<button type="button" aria-label={`Remove ${v}`} onClick={()=>onChange(values.filter(x=>x!==v))}><Icon name="X" size={12}/></button></span>)}<input value={q} onChange={e=>setQ(e.target.value)} placeholder={values.length?'Add more…':placeholder} onKeyDown={e=>{if(e.key==='Enter'&&q.trim()){e.preventDefault();onChange([...values,list[0]||q.trim()]);setQ('')}}}/></div>{q&&list.length>0&&<div className="tag-suggest">{list.map(o=><button type="button" key={o} onClick={()=>{onChange([...values,o]);setQ('')}}>{o}</button>)}</div>}</>;
+}

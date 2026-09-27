@@ -74,7 +74,7 @@ export const POST=route(async(req,u)=>{
    const selectedQuote=await first<{vendor_id:string}>('SELECT vendor_id FROM quotations WHERE tenant_id=? AND doc_id=? AND selected=1',u.tenantId,d.id);
    const vendorId=b.vendorId?idOf(b.vendorId,'Vendor'):selectedQuote?.vendor_id||null;if(vendorId&&!await first('SELECT id FROM vendors WHERE id=? AND tenant_id=?',vendorId,u.tenantId))throw new HttpError(400,'Vendor not found.');
    const lines=await all<Line>('SELECT * FROM purchase_lines WHERE tenant_id=? AND doc_id=? ORDER BY line_no',u.tenantId,d.id);
-   const t=await tenantOf(u);const number=await nextNumber(u.tenantId,String(tenantSettings(t).poPrefix||'PO'));const id=uid(),ts=now();
+   const t=await tenantOf(u);const number=await nextNumber(u.tenantId,String(tenantSettings(t).poPrefix||'PO'),true,['purchase_docs','number']);const id=uid(),ts=now();
    await batch([
     stmt('INSERT INTO purchase_docs(id,tenant_id,kind,number,title,justification,department,location,requester_id,vendor_id,pr_id,needed_by,currency,subtotal,tax,total,status,terms,created_by,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',id,u.tenantId,'PO',number,d.title,d.justification,d.department,d.location,u.id,vendorId,d.id,d.needed_by,d.currency,d.subtotal,d.tax,d.total,'Draft',String(tenantSettings(t).poTerms||'Payment within 30 days of invoice. Deliver to the location stated above.'),u.id,ts,ts),
     ...lines.map(l=>stmt('INSERT INTO purchase_lines(id,tenant_id,doc_id,line_no,description,item_code,qty,unit,unit_price,tax_rate,inventory_item_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',uid(),u.tenantId,id,l.line_no,l.description,l.item_code,l.qty,l.unit,l.unit_price,l.tax_rate,l.inventory_item_id)),
@@ -166,7 +166,7 @@ async function save(u:Member,b:Record<string,unknown>,req:Request){
  }else{
   if(!hasAction(u,page,'create'))throw new HttpError(403,kind==='PR'?'Raising requisitions is not available to your account.':'Creating purchase orders is not available to your account.');
   if(!canActOn(u,page,'create',fields.department,u.id)&&!(kind==='PR'&&fields.department===u.department))throw new HttpError(403,'You cannot raise documents for this department.');
-  id=uid();number=await nextNumber(u.tenantId,String(tenantSettings(t)[kind==='PR'?'prPrefix':'poPrefix']||kind));
+  id=uid();number=await nextNumber(u.tenantId,String(tenantSettings(t)[kind==='PR'?'prPrefix':'poPrefix']||kind),true,['purchase_docs','number']);
   await batch([stmt('INSERT INTO purchase_docs(id,tenant_id,kind,number,title,justification,department,location,requester_id,vendor_id,needed_by,currency,subtotal,tax,total,status,terms,created_by,created_at,updated_at,cost_centre,budget_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',id,u.tenantId,kind,number,fields.title,fields.justification,fields.department,fields.location,u.id,fields.vendor_id,fields.needed_by,fields.currency,sum.subtotal,sum.tax,sum.total,'Draft',fields.terms,u.id,ts,ts,fields.cost_centre,fields.budget_id),...lines.map((l,i)=>stmt('INSERT INTO purchase_lines(id,tenant_id,doc_id,line_no,description,item_code,qty,unit,unit_price,tax_rate,inventory_item_id) VALUES(?,?,?,?,?,?,?,?,?,?,?)',uid(),u.tenantId,id,i+1,l.description,l.item_code,l.qty,l.unit,l.unit_price,l.tax_rate,l.inventory_item_id)),auditStatement(u,`${kind} drafted`,id,fields.department,null,{number,total:sum.total})]);
  }
  if(b.submit){const d=await load(u,id);await startApproval(u,asDoc(d),req)}

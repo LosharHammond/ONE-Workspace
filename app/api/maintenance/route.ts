@@ -13,7 +13,7 @@ const LEAD_DAYS=7;
 function addInterval(d:string,v:number,unit:string){const x=new Date(d+'T00:00:00Z');if(unit==='days')x.setUTCDate(x.getUTCDate()+v);else if(unit==='weeks')x.setUTCDate(x.getUTCDate()+7*v);else if(unit==='months')x.setUTCMonth(x.getUTCMonth()+v);else x.setUTCFullYear(x.getUTCFullYear()+v);return x.toISOString().slice(0,10)}
 const canSee=(u:Member,w:{department:string,assignee_id:string|null,created_by:string})=>w.assignee_id===u.id||canActOn(u,'schedules','view',w.department||u.department,w.created_by);
 
-async function woNumber(u:Member){const t=await tenantOf(u);return nextNumber(u.tenantId,String(tenantSettings(t).woPrefix||'WO'))}
+async function woNumber(u:Member){const t=await tenantOf(u);return nextNumber(u.tenantId,String(tenantSettings(t).woPrefix||'WO'),true,['work_orders','number'])}
 // Creates work orders for plans that are due soon and have no open work order yet.
 async function generateDue(u:Member,req:Request){
  const horizon=new Date(Date.now()+LEAD_DAYS*86400000).toISOString().slice(0,10);
@@ -31,8 +31,8 @@ export const GET=route(async(req,u)=>{
  const url=new URL(req.url),id=url.searchParams.get('id');
  if(id){
   const w=await first<WO&Record<string,unknown>>('SELECT * FROM work_orders WHERE id=? AND tenant_id=?',idOf(id,'Work order'),u.tenantId);if(!w||!canSee(u,w))throw new HttpError(404,'Work order not found.');
-  const [asset,history,evidence]=await Promise.all([w.asset_id?first('SELECT id,code,name,location FROM assets WHERE id=? AND tenant_id=?',w.asset_id,u.tenantId):null,all('SELECT id,action,actor,created_at AS createdAt FROM audit WHERE tenant_id=? AND record_id=? ORDER BY created_at DESC',u.tenantId,w.id),w.evidence_file_id?first('SELECT id,name FROM files WHERE id=? AND tenant_id=?',w.evidence_file_id,u.tenantId):null]);
-  return {order:{...w,parts:JSON.parse(w.parts_json||'[]')},asset,history,evidence,canWork:w.assignee_id===u.id||canActOn(u,'schedules','update',w.department||u.department,w.created_by),canAssign:hasAction(u,'schedules','assign')};
+  const [asset,history,evidence,files]=await Promise.all([w.asset_id?first('SELECT id,code,name,location FROM assets WHERE id=? AND tenant_id=?',w.asset_id,u.tenantId):null,all('SELECT id,action,actor,created_at AS createdAt FROM audit WHERE tenant_id=? AND record_id=? ORDER BY created_at DESC',u.tenantId,w.id),w.evidence_file_id?first('SELECT id,name FROM files WHERE id=? AND tenant_id=?',w.evidence_file_id,u.tenantId):null,all("SELECT id,name,mime,bytes,uploaded_by AS uploadedBy,created_at AS createdAt FROM files WHERE tenant_id=? AND entity_type='work_order' AND entity_id=? ORDER BY created_at DESC",u.tenantId,w.id)]);
+  return {order:{...w,parts:JSON.parse(w.parts_json||'[]')},asset,history,evidence,files,canWork:w.assignee_id===u.id||canActOn(u,'schedules','update',w.department||u.department,w.created_by),canAssign:hasAction(u,'schedules','assign')};
  }
  const [plans,orders]=await Promise.all([
   all<Plan&{asset_code:string|null,asset_name:string|null,created_by:string}>('SELECT p.*,a.code AS asset_code,a.name AS asset_name FROM maintenance_plans p LEFT JOIN assets a ON a.id=p.asset_id AND a.tenant_id=p.tenant_id WHERE p.tenant_id=? ORDER BY p.next_due',u.tenantId),

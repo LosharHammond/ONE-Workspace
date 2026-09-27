@@ -41,7 +41,7 @@ export const POST=route(async(req,u)=>{
   const affected=await personIn(u,b.affectedUserId,'Affected user');
   const department=str(b.department,'Team',160);
   const assetId=b.assetId?idOf(b.assetId,'Asset'):null;if(assetId&&!await first('SELECT id FROM assets WHERE id=? AND tenant_id=?',assetId,u.tenantId))throw new HttpError(400,'Asset not found.');
-  const t=await tenantOf(u);const number=await nextNumber(u.tenantId,String(tenantSettings(t).ticketPrefix||'TKT'));
+  const t=await tenantOf(u);const number=await nextNumber(u.tenantId,String(tenantSettings(t).ticketPrefix||'TKT'),true,['tickets','number']);
   const id=uid(),ts=now();
   await batch([stmt('INSERT INTO tickets(id,tenant_id,number,title,description,type,category,subcategory,priority,impact,urgency,status,department,requester_id,affected_user_id,asset_id,location,due_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)',id,u.tenantId,number,title,description,type,str(b.category,'Category',80,false),str(b.subcategory,'Subcategory',80,false),priority,impact,urgency,'New',department,u.id,affected,assetId,str(b.location,'Location',200,false)||u.location||'',dueFrom(ts,priority),ts,ts),auditStatement(u,'Ticket raised',id,department,null,{number,title,priority})]);
   await notify(u,await teamLeads(u,department),{kind:'ticket',title:`New ${priority.toLowerCase()} ticket ${number}`,body:`${title}\nRaised by ${u.name} for ${department}`,link:`#/tickets/${id}`},req);

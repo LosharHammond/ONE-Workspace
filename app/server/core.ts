@@ -125,7 +125,9 @@ export function idOf(v:unknown,label='Record'):string{if(typeof v!=='string'||!/
 export async function tenantOf(u:{tenantId:string}){const t=await first<Tenant>('SELECT * FROM tenants WHERE id=?',u.tenantId);if(!t)throw new HttpError(404,'Workspace not found.');return t}
 export function tenantSettings(t:Tenant){try{return JSON.parse(t.settings_json||'{}') as Record<string,unknown>}catch{return {}}}
 // Sequential, gap-tolerant document numbers such as PR-2026-0007.
-export async function nextNumber(tenantId:string,prefix:string,yearly=true){const key=yearly?`${prefix}-${new Date().getUTCFullYear()}`:prefix;const r=await first<{value:number}>('INSERT INTO counters(tenant_id,key,value) VALUES(?,?,1) ON CONFLICT(tenant_id,key) DO UPDATE SET value=value+1 RETURNING value',tenantId,key);return `${key}-${String(r?.value||1).padStart(yearly?4:5,'0')}`}
+// Numbers already used (e.g. by imports or a changed prefix) are skipped, so a collision never blocks work.
+const numbered:Record<string,[string,string]>={TKT:['tickets','number'],PR:['purchase_docs','number'],PO:['purchase_docs','number'],WO:['work_orders','number']};
+export async function nextNumber(tenantId:string,prefix:string,yearly=true,check?:[string,string]){const key=yearly?`${prefix}-${new Date().getUTCFullYear()}`:prefix;const guard=check||numbered[prefix]||(yearly?null:['assets','code']);for(let i=0;i<50;i++){const r=await first<{value:number}>('INSERT INTO counters(tenant_id,key,value) VALUES(?,?,1) ON CONFLICT(tenant_id,key) DO UPDATE SET value=value+1 RETURNING value',tenantId,key);const n=`${key}-${String(r?.value||1).padStart(yearly?4:5,'0')}`;if(!guard||!await first(`SELECT 1 FROM ${guard[0]} WHERE tenant_id=? AND ${guard[1]}=?`,tenantId,n))return n}throw new HttpError(409,'Could not allocate a document number. Try again.')}
 
 export const projection='id,module,title,department,status,owner,amount,details,updated,version,created_by AS createdBy,file_key AS fileKey';
 export async function getRecord(u:{tenantId:string},id:string){return first<Item>(`SELECT ${projection} FROM records WHERE id=? AND tenant_id=?`,id,u.tenantId)}

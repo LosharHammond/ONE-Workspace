@@ -16,7 +16,9 @@
     "deploy": "node ./node_modules/wrangler/bin/wrangler.js deploy --config dist/server/wrangler.json",
     "typecheck": "tsc --noEmit",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "icons": "node scripts/gen-icons.mjs"
+    "icons": "node scripts/gen-icons.mjs",
+    "test:e2e": "node scripts/test-e2e.mjs",
+    "test:unit": "node --test tests/unit/access-policy.test.mjs"
   },
   "dependencies": {
     "@base-ui/react": "^1.7.0",
