@@ -839,3 +839,15 @@ input.qty{width:90px;text-align:right}input.money-in{width:130px;text-align:righ
 /* Dialog content scrolls as a whole; its children never shrink. */
 .modal-body>*,.inspector-body>*{flex-shrink:0}
 @media (max-width:860px){.support-banner{font-size:12px;gap:8px}.support-banner em{display:none}.support-banner>svg{display:none}.support-exit{height:28px;padding:0 10px}}
+
+/* Platform Console: open-company chooser */
+.open-choices{display:flex;flex-direction:column;gap:10px}
+.open-choice{display:flex;align-items:center;gap:14px;width:100%;text-align:left;padding:14px 16px;border-radius:12px;border:1px solid var(--line);background:var(--surface-2,transparent);color:inherit;cursor:pointer;font:inherit}
+.open-choice span{flex:1;display:flex;flex-direction:column;gap:3px}
+.open-choice small{color:var(--muted);line-height:1.4}
+.open-choice:hover:not(:disabled),.open-choice:focus-visible{border-color:var(--brand);outline:none}
+.open-choice.primary{border-color:color-mix(in srgb,var(--brand) 55%,var(--line))}
+.open-choice:disabled{opacity:.55;cursor:not-allowed}
+.reason-chips{display:flex;flex-wrap:wrap;gap:6px;margin-bottom:12px}
+.chip-btn{border:1px solid var(--line);background:transparent;color:inherit;border-radius:999px;padding:5px 11px;font:inherit;font-size:12.5px;cursor:pointer}
+.chip-btn.on,.chip-btn:hover{border-color:var(--brand);background:color-mix(in srgb,var(--brand) 14%,transparent)}

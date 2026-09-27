@@ -14,7 +14,7 @@ export default function Platform({parts}:{parts:string[]}){
 
 function Workspaces({creating}:{creating?:boolean}){
  const {s}=useApp();const {data,error,reload}=useApi<{tenants:TenantRow[],homeTenant:string,activeSupport:{tenantId:string,tenantName:string,startedAt:string}|null}>('/api/platform');
- const [status,setStatus]=useState('live');const [support,setSupport]=useState<TenantRow|null>(null);
+ const [status,setStatus]=useState('live');const [support,setSupport]=useState<TenantRow|null>(null),[choice,setChoice]=useState<TenantRow|null>(null);
  const rows=(data?.tenants||[]).filter(t=>status==='all'||(status==='live'?t.status!=='archived':t.status===status));
  const cols:Col<TenantRow>[]=[
   {key:'name',label:'Company',render:t=><span className="who"><span className="tenant-mark" style={{background:t.brandColor}}>{t.name[0]}</span><span>{t.name}{t.id===data?.homeTenant&&<Chip tone="violet">Platform HQ</Chip>}<small>{t.slug} · {t.domains||'any email domain'}</small></span></span>},
@@ -22,7 +22,7 @@ function Workspaces({creating}:{creating?:boolean}){
   {key:'plan',label:'Plan',width:100},{key:'members',label:'People',width:80,align:'right'},{key:'assets',label:'Assets',width:80,align:'right'},{key:'tickets',label:'Tickets',width:80,align:'right'},{key:'purchasing',label:'PR/PO',width:80,align:'right'},
   {key:'lastActive',label:'Last active',width:120,render:t=><span className="muted">{ago(t.lastActive)}</span>},
   {key:'createdAt',label:'Created',width:110,render:t=>dateOnly(t.createdAt)},
-  {key:'enter',label:'',width:130,sortable:false,render:t=>t.id!==s.tenant.id&&t.status!=='archived'&&<Btn size="sm" icon="LogIn" onClick={e=>{e.stopPropagation();setSupport(t)}}>Enter</Btn>},
+  {key:'enter',label:'',width:130,sortable:false,render:t=>t.status!=='archived'&&<Btn size="sm" icon="LogIn" onClick={e=>{e.stopPropagation();goTo(t,data?.homeTenant,s.tenant.id,!!s.support,()=>setSupport(t))}}>{t.id===s.tenant.id?'Open':'Go to'}</Btn>},
  ];
  const live=(data?.tenants||[]).filter(t=>t.status!=='archived');
  return <div className="page">
@@ -30,17 +30,35 @@ function Workspaces({creating}:{creating?:boolean}){
   <ErrorNote error={error} onRetry={reload}/>
   {data?.activeSupport&&<Note tone="warn">An earlier support session in {data.activeSupport.tenantName} is still open. It closes when you start another or sign out.</Note>}
   {data&&<div className="stats"><Stat label="Workspaces" value={live.length} icon="Building" tone="violet"/><Stat label="Active" value={live.filter(t=>t.status==='active').length} icon="CircleCheck" tone="green"/><Stat label="Suspended" value={live.filter(t=>t.status==='suspended').length} icon="PauseCircle" tone="amber"/><Stat label="People across workspaces" value={live.reduce((n,t)=>n+t.members,0)} icon="Users" tone="sky"/><Stat label="Open records" value={live.reduce((n,t)=>n+t.assets+t.tickets+t.purchasing,0).toLocaleString()} icon="Database" tone="teal" sub="Assets, tickets and PR/POs"/></div>}
-  {!data?<Skeleton/>:<Grid id="platform-tenants" rows={rows} cols={cols} exportName="workspaces" onOpen={t=>go(`platform/workspaces/${t.id}`)} toolbar={<select className="grid-select" value={status} onChange={e=>setStatus(e.target.value)} aria-label="Status"><option value="live">Active & suspended</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option><option value="all">All</option></select>}/>}
+  {!data?<Skeleton/>:<Grid id="platform-tenants" rows={rows} cols={cols} exportName="workspaces" onOpen={t=>setChoice(t)} toolbar={<select className="grid-select" value={status} onChange={e=>setStatus(e.target.value)} aria-label="Status"><option value="live">Active & suspended</option><option value="active">Active</option><option value="suspended">Suspended</option><option value="archived">Archived</option><option value="all">All</option></select>}/>}
   {creating&&<CreateWorkspace onClose={()=>go('platform/workspaces')} onDone={()=>reload()}/>}
   {support&&<EnterWorkspace tenant={support} onClose={()=>setSupport(null)}/>}
+  {choice&&<OpenWorkspace t={choice} current={choice.id===s.tenant.id} onClose={()=>setChoice(null)} onGo={()=>{const t=choice;setChoice(null);goTo(t,data?.homeTenant,s.tenant.id,!!s.support,()=>setSupport(t))}}/>}
  </div>;
+}
+
+// "Go to" a company: the workspace you are already in just opens; the owner's own HQ workspace ends any
+// support session; any other company starts an audited support session (reason required).
+async function goTo(t:{id:string},home:string|undefined,current:string,inSupport:boolean,startSupport:()=>void){
+ if(t.id===current){location.hash='#/home';return}
+ if(t.id===home){if(inSupport)await api('/api/platform',{action:'support-end'});location.hash='#/home';location.reload();return}
+ startSupport();
+}
+function OpenWorkspace({t,current,onClose,onGo}:{t:TenantRow,current:boolean,onClose:()=>void,onGo:()=>void}){
+ return <Modal open onClose={onClose} title={t.name} subtitle={`${t.slug} · ${t.status[0].toUpperCase()+t.status.slice(1)} · ${t.members} people`}>
+  <div className="open-choices">
+   <button className="open-choice primary" disabled={t.status==='archived'} onClick={onGo} autoFocus><Icon name="LogIn" size={20}/><span><b>{current?'Open this workspace':'Go to workspace'}</b><small>{t.status==='archived'?'Restore the workspace before entering it.':current?'You are already working in this company.':'Work inside the company with full Company Admin access to its modules, people, settings, roles and records. Recorded as a support session.'}</small></span><Icon name="ChevronRight" size={16}/></button>
+   <button className="open-choice" onClick={()=>{onClose();go(`platform/workspaces/${t.id}`)}}><Icon name="Settings2" size={20}/><span><b>Manage from the Platform Console</b><small>Profile, administrators, modules, limits, security, audit activity and status.</small></span><Icon name="ChevronRight" size={16}/></button>
+  </div>
+ </Modal>;
 }
 
 // Starts an audited support session. The owner acts as themselves (never as another user).
 function EnterWorkspace({tenant,onClose}:{tenant:{id:string,name:string,status:string},onClose:()=>void}){
  const {toast}=useApp();const [reason,setReason]=useState(''),[busy,setBusy]=useState(false);
- return <Modal open onClose={onClose} title={`Enter ${tenant.name}`} subtitle="Support sessions are recorded: reason, start and end time, your IP and browser, and every page viewed or change made." footer={<><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn variant="primary" icon="LogIn" busy={busy} disabled={reason.trim().length<5} onClick={async()=>{setBusy(true);try{await api('/api/platform',{action:'support-start',id:tenant.id,reason});location.hash='#/home';location.reload()}catch(e){toast((e as Error).message,'error');setBusy(false)}}}>Enter workspace</Btn></>}>
+ return <Modal open onClose={onClose} title={`Enter ${tenant.name}`} subtitle="Support sessions are recorded: reason, start and end time, your IP and browser, and every page viewed or change made." footer={<><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn variant="primary" icon="LogIn" busy={busy} disabled={reason.trim().length<5} onClick={async()=>{setBusy(true);try{await api('/api/platform',{action:'support-start',id:tenant.id,reason});location.hash='#/home';location.reload()}catch(e){toast((e as Error).message,'error');setBusy(false)}}}>Go to workspace</Btn></>}>
   {tenant.status==='suspended'&&<Note tone="warn">This workspace is suspended. Its members cannot sign in, but you can enter to support it.</Note>}
+  <div className="reason-chips" role="group" aria-label="Common reasons">{['Configuration and setup support','Reviewing data at the company’s request','Investigating a reported problem','Routine platform check'].map(r=><button key={r} type="button" className={cx('chip-btn',reason===r&&'on')} onClick={()=>setReason(r)}>{r}</button>)}</div>
   <Field label="Reason for entering" hint="Shown in the workspace's activity log and the platform audit."><textarea autoFocus rows={3} value={reason} onChange={e=>setReason(e.target.value)} placeholder="e.g. Admin asked for help configuring purchase approvals (ticket #42)"/></Field>
  </Modal>;
 }
@@ -93,7 +111,7 @@ function WorkspaceDetail({id,tab}:{id:string,tab:string}){
  const tabs=[['overview','Overview'],['profile','Company profile'],['admins','Administrators'],['modules','Modules'],['usage','Usage & limits'],['security','Security'],['audit','Audit activity'],['data','Data tools'],['danger','Danger zone']];
  return <div className="page">
   <div className="doc-top"><Btn variant="ghost" icon="ArrowLeft" onClick={()=>go('platform/workspaces')}>All workspaces</Btn></div>
-  <Header icon="Building" tone="red" title={<>{t.name} <Chip>{t.status[0].toUpperCase()+t.status.slice(1)}</Chip></>} subtitle={`${t.slug} · ${t.plan} plan · created ${dateOnly(t.created_at)}`} actions={t.id!==s.tenant.id&&t.status!=='archived'&&<Btn variant="primary" icon="LogIn" onClick={()=>setEnter(true)}>Enter workspace</Btn>}/>
+  <Header icon="Building" tone="red" title={<>{t.name} <Chip>{t.status[0].toUpperCase()+t.status.slice(1)}</Chip></>} subtitle={`${t.slug} · ${t.plan} plan · created ${dateOnly(t.created_at)}`} actions={t.status!=='archived'&&<Btn variant="primary" icon="LogIn" onClick={()=>goTo(t,'one-workspace',s.tenant.id,!!s.support,()=>setEnter(true))}>{t.id===s.tenant.id?'Open workspace':'Go to workspace'}</Btn>}/>
   <Tabs value={tab} onChange={v=>go(`platform/workspaces/${t.id}/${v}`)} items={tabs.map(([id,label])=>({id,label}))}/>
   {tab==='overview'&&<><div className="stats"><Stat label="Active people" value={String(data.usage.members)} icon="Users" tone="sky" sub={`${data.usage.invited} awaiting activation · limit ${data.limits.maxUsers}`}/><Stat label="Open tickets" value={String(data.usage.openTickets)} icon="LifeBuoy" tone="orange" sub={`${data.usage.tickets} total`}/><Stat label="Assets" value={String(data.usage.assets)} icon="Boxes" tone="teal"/><Stat label="Purchasing documents" value={String(data.usage.purchasing)} icon="ShoppingBag" tone="green"/><Stat label="Storage" value={bytes(Number(data.usage.storageBytes))} icon="HardDrive" tone="amber" sub={`of ${(data.limits.maxStorageMb/1024).toLocaleString()} GB`}/></div>
    <div className="cards-3"><Card title="Health"><KV items={[['Status',t.status],['Last activity',ago(String(data.usage.lastActive||''))],['Administrators',`${data.admins.filter(a=>a.active&&a.activated).length} active, ${data.admins.filter(a=>a.active&&!a.activated).length} invited`],['Modules on',`${data.modules.length} of ${moduleCatalog.length}`],['Departments',String(data.usage.departments)],['Roles',String(data.usage.roles)]]}/></Card>
