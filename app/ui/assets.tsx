@@ -11,9 +11,13 @@ const views=['mine','all','audits','dashboard'];
 const gone=(a:Asset)=>['Retired','Disposed','Lost'].includes(a.status);
 
 export default function Assets({parts}:{parts:string[]}){
- const {s,person,can}=useApp();
+ const {can}=useApp();
  const view=views.includes(parts[0])?parts[0]:parts[0]?'all':(can('assets')?'all':'mine');
- if(view==='audits')return <Audits openId={parts[1]}/>;
+ if(view==='audits')return <Audits key="audits" openId={parts[1]}/>;
+ return <Register key="register" parts={parts} view={view}/>;
+}
+function Register({parts,view}:{parts:string[],view:string}){
+ const {s,person}=useApp();
  const openId=views.includes(parts[0])?parts[1]:parts[0];
  const {data,error,reload}=useApi<{assets:Asset[],canImport:boolean,canCreate:boolean}>('/api/assets');
  const [importing,setImporting]=useState(false);

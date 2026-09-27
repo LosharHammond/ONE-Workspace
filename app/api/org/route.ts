@@ -21,7 +21,7 @@ async function validDept(u:Member,b:Record<string,unknown>,selfId?:string){
  if(code&&await first('SELECT id FROM departments WHERE tenant_id=? AND code=? AND id!=?',u.tenantId,code,selfId||''))throw new HttpError(409,`The code ${code} is already used by another department.`);
  const headId=b.headId?idOf(b.headId,'Department head'):null;
  if(headId&&!await first('SELECT id FROM members WHERE id=? AND tenant_id=? AND active=1',headId,u.tenantId))throw new HttpError(400,'Choose an active department head from this workspace.');
- let parentId=b.parentId?idOf(b.parentId,'Parent department'):null;
+ const parentId=b.parentId?idOf(b.parentId,'Parent department'):null;
  if(parentId){if(parentId===selfId)throw new HttpError(400,'A department cannot be its own parent.');
   // Walk up the tree to refuse cycles.
   let cur:string|null=parentId;for(let i=0;cur&&i<20;i++){if(cur===selfId)throw new HttpError(400,'That would create a loop in the department hierarchy.');const p:{parent_id:string|null}|null=await first<{parent_id:string|null}>('SELECT parent_id FROM departments WHERE id=? AND tenant_id=?',cur,u.tenantId);if(!p&&i===0)throw new HttpError(400,'Parent department not found.');cur=p?.parent_id||null}

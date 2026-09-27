@@ -116,7 +116,7 @@ function Manage({openId}:{openId?:string}){
   {key:'name',label:'Full name',render:m=><span className="who"><Avatar name={m.name} size={24}/><span>{m.name}<small>{m.title}</small></span></span>,value:m=>m.name},
   {key:'email',label:'Email'},
   {key:'phone',label:'Phone',width:130},
-  {key:'role',label:'Role',width:170,render:m=><span>{roleName(m)}{m.role==='admin'&&<Chip tone="violet">Admin</Chip>}</span>,value:m=>roleName(m)},
+  {key:'role',label:'Role',width:170,render:m=><span>{roleName(m)}{m.role==='admin'&&m.role_id&&<Chip tone="violet">Admin</Chip>}</span>,value:m=>roleName(m)},
   {key:'manager',label:'Reporting manager',width:170,render:m=><Who id={m.manager_id} fallback="—"/>,value:m=>person(m.manager_id)?.name||''},
   {key:'department',label:'Department',width:140},
   {key:'location',label:'Primary location',width:170},

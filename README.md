@@ -1,80 +1,74 @@
 # One Workspace
 
-A multi-tenant operating system for companies: people, assets, tickets, purchasing, files and department knowledge in one place. Each company is a **tenant** with strictly isolated data. The platform owner — **losharhammond@gmail.com, and nobody else** — provisions and suspends companies from the built-in Platform console.
+A multi-tenant SaaS for companies: people, assets, inventory, maintenance, help desk, purchasing, files, department spaces and reports in one place. Each company is a **workspace** with strictly isolated data. The **Platform Owner** — **losharhammond@gmail.com, and nobody else** — creates, suspends, reactivates and archives workspaces from the Platform Console, and can enter a workspace only through an audited support session.
 
-One Workspace is independent: it has its own staff sign-in and no ChatGPT, OpenAI Sites or "Sign in with ChatGPT" integration.
+One Workspace is independent: it has its own sign-in and no ChatGPT, OpenAI Sites or "Sign in with ChatGPT" integration.
 
 Built with React 19 + [vinext](https://github.com/cloudflare/vinext) on Cloudflare Workers, D1 (SQLite) and R2 storage.
+
+See [`docs/feature-matrix.md`](docs/feature-matrix.md) for the status of every feature and how it was verified.
 
 ## Modules
 
 | App | What it does |
 |---|---|
-| **Home** | Personal focus queue (approvals waiting on you, tickets assigned to you), company pulse, ticket and spend charts, announcements. |
-| **Tickets** | Incidents and service requests with priorities, SLA due times, team queues, a drag-and-drop board, assignment, internal notes, @mentions and activity history. |
-| **Purchasing** | Purchase requisitions → sequential approvals → purchase orders → issue to vendor (optional email) → goods receipt (partial/full, GRN numbers). Vendors, approval inbox, printable documents, configurable approval workflows. |
-| **Assets** | IT and physical asset register with auto codes, assignment/return with hand-over notes, location tree, warranty tracking, linked tickets and full history. |
-| **People** | Directory, org chart (from reporting managers), departments with heads, locations, and **Manage users** (bulk enable/disable, password reset, spreadsheet import). |
-| **Spaces** | Intranet space per department plus a company space: Markdown pages, procedures, policies, research notes and announcements (announcements notify the space). |
-| **Files** | Folders, versioned uploads up to 25 MB, company/department/private visibility, inline PDF and image preview. |
-| **Operations** | Inventory, goods receipts and budgets registers, IT & CCTV (NVR) storage readings, consumer research recordings with AI transcripts. |
-| **Admin** | Company settings and numbering, **Roles & permissions** (custom roles with a permission matrix and location scope), access overrides, data hub, activity log, platform console. |
+| **Home** | Focus queue (approvals and tickets waiting on you), company pulse, charts, announcements. |
+| **Help desk** | Incidents and service requests: categories/subcategories, impact × urgency → priority, SLA, assignment, approval, escalation, internal notes, attachments, board and saved views. |
+| **Purchasing** | Requisitions → sequential approvals → purchase orders, vendors, quotations, budgets and cost centres, partial goods receipt (into stock or as new assets), returns. |
+| **Assets** | Register with QR labels, check-out/check-in, custody history, transfers, depreciation, disposal, attachments, audits (stock verification), import/export. |
+| **Inventory** | Items, stores, receipts/issues/transfers/adjustments/returns, batch/serial, reorder alerts. |
+| **Maintenance** | Preventive plans, recurring schedules, work orders, technicians, parts and costs, completion evidence. |
+| **People** | Directory, org chart, departments (codes, heads, cost centres, hierarchy, history, import), **Manage users** (invitations, statuses, bulk actions, import, activity report). |
+| **Spaces / Files** | Department and company spaces, versioned files with visibility. |
+| **Reports** | Ten workspace-scoped reports with CSV export. |
+| **Admin** | Company settings and numbering, **Roles & permissions** (templates, actions, scopes, preview), access overrides, activity and security log. |
+| **Platform** | Platform Owner only: workspaces, provisioning, modules, limits, support sessions, platform audit. |
 
-Press **Ctrl + K** anywhere for the command palette (search across everything, jump, create). `g` then a letter jumps between apps; `?` lists shortcuts.
+## Accounts and access
 
-## Access model
+- **Identities and memberships.** A person has one global sign-in (`identities` + `credentials`) and a membership (`members`) in each workspace they belong to. The active workspace is chosen on the server from the session; people with several memberships switch with the workspace switcher.
+- **No temporary passwords.** Administrators invite people; the invitee receives a one-time activation link and sets their own password. Resets work the same way. Only SHA-256 hashes of links are stored, and they expire (7 days / 2 hours). Without email configured, the link is shown once to the person who created it.
+- **Roles.** Baselines: Company Admin, Department Head, Standard User, Technician, Approver, Purchasing User, Asset Manager, Storekeeper, Viewer, plus custom roles. Each role is a page × action (view, create, update, delete, approve, export, import, configure…) matrix with a scope (none, own, department, selected departments, all) and optional location, asset-category and status limits. Everything not granted is denied, and every check runs on the server.
+- **Platform Owner.** Fixed in code (`PLATFORM_OWNER_EMAIL` in `app/server/core.ts`); no workspace role — including Company Admin — can grant it. Support sessions require a reason, show a banner with **Exit workspace**, and log every request to the platform audit and the workspace's activity log.
 
-- **Tenant isolation**: every business table carries `tenant_id`; every server query filters by the signed-in member's tenant. Suspended tenants cannot sign in.
-- **Access levels**: Admin, Department Head, Standard User, Viewer (stored as `admin`/`manager`/`employee`/`viewer`).
-- **Custom roles** (e.g. "PR User", "Purchase Head"): a role type plus a page × action matrix (`none`/`own`/`department`/`all`) and an optional asset location scope.
-- **Overrides**: grant or deny one action for a person, an access level or a department. Precedence: person → custom role → access level in department → department → access level → defaults (`app/access-policy.ts`).
-- All checks run on the server for every request; the browser only hides what you cannot do.
-
-## Sequential approvals
-
-`app/server/approvals.ts`. When a requisition or order is submitted, the most specific active workflow (department match, then highest minimum amount) is expanded into steps. Step approvers can be: the requester's reporting manager, the requesting department's head, the head of a named department, anyone with a custom role, any admin/department head, or a named person. Steps can apply only above an amount. Steps with nobody eligible are skipped and recorded; requesters can never approve their own documents; if no approver remains, administrators approve. Each transition notifies the next approver in-app (and by email when configured). Administrators can override a step; this is recorded.
-
-## Configuration (site secrets)
+## Configuration (secrets)
 
 | Secret | Purpose |
 |---|---|
-| `PLATFORM_SETUP_TOKEN` | Random secret (24+ characters) used once to set the platform owner's first password; remove it afterwards. |
-| `RESEND_API_KEY`, `MAIL_FROM` | Optional email for approvals, assignments, comments and emailing POs to vendors. Without them, notifications are in-app only. |
-| `ASSEMBLYAI_API_KEY`, `GROQ_API_KEY` | Research transcription and summaries. |
-| `APP_ORIGIN` | Public origin for links in emails and webhook callbacks. |
-| `DATA_IMPORT_TOKEN` | One-time bulk import endpoint (unchanged). |
+| `PLATFORM_SETUP_TOKEN` | Random secret (32+ characters) used once to set the Platform Owner's first password. Remove it afterwards. |
+| `RESEND_API_KEY`, `MAIL_FROM` | Email for invitations, resets and notifications. Without them, links are shown once in the UI and notifications stay in-app. |
+| `APP_ORIGIN` | Public origin used in links. |
+| `ASSEMBLYAI_API_KEY`, `GROQ_API_KEY` | Research transcription and summaries (optional). |
+| `DATA_IMPORT_TOKEN` | One-time bulk import endpoint (optional). |
 
-## Upgrading from Procus One
+Set secrets with `wrangler secret put` (production) or `.dev.vars` (local; git-ignored). Never put them in source files.
 
-Migration `drizzle/0006_one_workspace.sql` is additive:
+## Migrations
 
-- creates the `procus` tenant and assigns all existing rows to it;
-- creates departments from existing staff, default PR/PO workflows, starter roles matching the AssetInfinity roles (PR User, PO User, Purchase Head, PR / Ticket Resolver, Technician, Jr. Admin, Stores, IT Employee) and a welcome announcement;
+All schema changes are additive migrations in `drizzle/`; nothing is dropped or reset.
 
-Migration `drizzle/0007_platform_owner.sql` creates the operator's own workspace ("One Workspace HQ") with the owner account **losharhammond@gmail.com** (no password yet) and clears any other owner flags. The owner is also hard-coded in `app/server/core.ts` (`PLATFORM_OWNER_EMAIL`), so no other account can reach the Platform console.
+- `0006_one_workspace.sql` — multi-tenancy; existing Procus data becomes the `procus` workspace.
+- `0007_platform_owner.sql` — the operator's own workspace ("One Workspace HQ") and the owner membership, **without a password**.
+- `0008_saas_platform.sql` — identities, credentials, one-time tokens, support sessions, platform audit, saved views, asset audits, inventory, maintenance, quotations, budgets, and new columns; backfills identities and credentials from existing members.
 
-Existing sessions keep working (the old session cookie is still accepted). After deploying, an administrator can use **Admin → Data hub → Promote to live records** to turn the imported asset register, tickets, requisitions and purchase orders into live records, and **People → Manage users → Import** to load the AssetInfinity "List of users" export (roles, reporting managers, departments, locations). Imports never grant full Admin.
+## Platform Owner first sign-in
 
-## Platform owner first sign-in
-
-1. Add a `PLATFORM_SETUP_TOKEN` secret (24+ random characters) to the Worker.
-2. Open the site, choose **Platform owner first-time setup** on the sign-in screen, enter the token and a password.
-3. Sign in as losharhammond@gmail.com, then delete the `PLATFORM_SETUP_TOKEN` secret. Setup refuses to run once the owner has a password.
+1. Add `PLATFORM_SETUP_TOKEN` (see below).
+2. Open the site → **Platform Owner setup** on the sign-in screen → enter the token and a new password.
+3. Sign in as losharhammond@gmail.com, then delete the secret. Setup refuses to run once the owner has a password, is rate limited, and returns the same error for every failure.
 
 ## Deploying (Cloudflare Workers)
 
 ```bash
 npx wrangler login
-npx wrangler d1 create one-workspace        # note the database_id
-npx wrangler r2 bucket create one-workspace-files
-D1_DATABASE_ID=<database_id> npm run build
-npm run db:migrate:remote
-npx wrangler secret put PLATFORM_SETUP_TOKEN --config dist/server/wrangler.json
+D1_DATABASE_ID=<existing database_id> npm run build
+npm run db:migrate:remote        # applies only migrations not yet applied
+npx wrangler secret put PLATFORM_SETUP_TOKEN --config dist/server/wrangler.json   # first deploy only
 npm run deploy
 ```
 
-Set `APP_ORIGIN` to the public address once it is known. To keep the existing Procus data, export the current D1 database and import it into the new one before running the migrations.
+For a new installation, first run `npx wrangler d1 create one-workspace` and `npx wrangler r2 bucket create one-workspace-files`. Back up production before migrating: `npx wrangler d1 export DB --remote --config dist/server/wrangler.json --output backup.sql`.
 
-## Local development
+## Local development and tests
 
-See `LOCAL-DEVELOPMENT.md`.
+See [`LOCAL-DEVELOPMENT.md`](LOCAL-DEVELOPMENT.md).

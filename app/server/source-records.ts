@@ -4,7 +4,8 @@ const text=(p:Record<string,unknown>,...keys:string[])=>{for(const key of keys){
 const number=(v:string)=>{const n=Number(v.replaceAll(',',''));return v&&Number.isFinite(n)?n:0};
 export function mapSource(row:SourceRow):Item|null{
  const p=JSON.parse(row.payload_json) as Record<string,unknown>,s=(...keys:string[])=>text(p,...keys);
- let module='',title='',status=s('Status')||'Not specified',owner='',amount=0,unit='',currency='',department=s('Department','Assets Department','Staff Department')||'Unassigned',details='',reference=row.source_key;
+ const department=s('Department','Assets Department','Staff Department')||'Unassigned';
+ let module='',title='',status=s('Status')||'Not specified',owner='',amount=0,unit='',currency='',details='',reference=row.source_key;
  switch(row.dataset){
  case 'staff':module='people';title=s('Full Name');status=s('Is Active').toLowerCase()==='true'?'Active':'Inactive';owner=s('Reporting Manager');details=[s('Job Title'),s('Staff Unit'),s('Company')].filter(Boolean).join(' · ');break;
  case 'locations':module='locations';title=s('Unit');status='Listed';details=s('Department');break;

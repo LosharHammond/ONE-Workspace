@@ -7,7 +7,7 @@ export type AccessRule={id?:string,subject_type:string,subject_id:string,departm
 export type AccessUser={id:string,role:string,department:string,active:number,roleId?:string|null,rules?:AccessRule[],disabledPages?:string[],extraDepartments?:string[]};
 
 export const baseRoles=['admin','manager','employee','viewer'] as const;
-export const baseRoleLabels:Record<string,string>={admin:'Admin',manager:'Department Head',employee:'Standard User',viewer:'Viewer'};
+export const baseRoleLabels:Record<string,string>={admin:'Company Admin',manager:'Department Head',employee:'Standard User',viewer:'Viewer'};
 
 export const pageActions:Record<string,string[]>={
  overview:['view'],
