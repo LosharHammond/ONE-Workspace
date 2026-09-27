@@ -35,6 +35,9 @@ export const pageCatalog:CatalogPage[]=[
  P('company-data','Data hub: imported registers and promotion to live records.','DatabaseZap','admin/data','data','enterprise'),
  P('assistant','ONE, the floating voice-enabled AI assistant, and AI actions on every page.','Sparkles','home','ai','starter'),
  P('connectors','Connector Center: Microsoft, Google, REST, webhooks and MCP servers.','Link','admin/connectors','integrations','business'),
+ P('projects','Project planner: lifecycle, plans, Gantt, finance and procurement.','FolderKanban','projects','projects','business',{flags:['autoGrant']}),
+ P('tasks','Tasks: personal, department, project and space work.','ListChecks','tasks','tasks','starter',{flags:['autoGrant']}),
+ P('messages','Company messaging: channels, threads and direct messages.','MessageSquare','messages','messages','starter',{flags:['autoGrant']}),
  P('app-pages','Custom pages built with the visual page and widget builder.','LayoutGrid','pages','builder','business'),
  // Platform-only pages: never assignable to a company.
  {id:'platform.workspaces',name:'Workspaces',description:'Create, configure, suspend and enter company workspaces.',icon:'Building',route:'platform/workspaces',module:'platform',actions:['view'],plan:'enterprise',status:'stable',kind:'platform',dependsOn:[],connectors:[],flags:[],version:'1.0'},
@@ -49,8 +52,8 @@ export const planRank:Record<PagePlan,number>={starter:0,business:1,enterprise:2
 
 // Default packages. The Platform Owner can edit these and add more (stored in platform settings).
 export type PagePackage={id:string,name:string,description:string,pages:string[]};
-const starter=['people','locations','maintenance','assets','knowledge','documents','assistant'];
-const business=[...starter,'schedules','inventory','requests','procurement','suppliers','receipts','budgets','reports','it','connectors','app-pages'];
+const starter=['people','locations','maintenance','assets','knowledge','documents','assistant','tasks','messages'];
+const business=[...starter,'projects','schedules','inventory','requests','procurement','suppliers','receipts','budgets','reports','it','connectors','app-pages'];
 export const defaultPackages:PagePackage[]=[
  {id:'starter',name:'Starter',description:'Help desk, assets, people, spaces, files and ONE, the AI assistant.',pages:starter},
  {id:'business',name:'Business',description:'Starter plus purchasing, inventory, maintenance, reports, connectors and the page builder.',pages:business},

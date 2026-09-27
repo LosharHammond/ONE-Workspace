@@ -3,6 +3,8 @@ import {first,stmt,uid,now,HttpError,parseJson,run} from './core';
 import {openSecret,sealSecret,safeUrl,PLATFORM_SCOPE} from './secrets';
 import {rateLimit} from './auth';
 import {connectorTypeById,type ConnectorType} from '../connector-catalog';
+import {scopesFor} from '../connector-capabilities';
+import {env} from 'cloudflare:workers';
 import type {Member} from './policy';
 
 // Connector runtime. Connectors belong to one workspace (tenant_id) or to the platform ('__platform__').
@@ -10,7 +12,7 @@ import type {Member} from './policy';
 // untrusted: it is shown as plain text and handed to the AI only as data. Connectors never bypass
 // One Workspace permissions: a person needs the "use connectors" permission, their role must be allowed,
 // and the page they use it from must be enabled for the connector.
-export type ConnectorRow={id:string,tenant_id:string,scope:string,provider:string,name:string,description:string,auth_type:string,config_json:string,secret_enc:string|null,secret_hint:string,webhook_secret_enc:string|null,status:string,health:string,last_ok_at:string|null,last_sync_at:string|null,last_error:string,sync_minutes:number,pages_json:string,roles_json:string,allowed_tools_json:string,mutating_tools_json:string,tools_json:string,resources_json:string,field_map_json:string,created_by:string,created_at:string,updated_by:string,updated_at:string};
+export type ConnectorRow={owner_member_id?:string|null,granted_scopes?:string,account_identity?:string,paused?:number,next_sync_at?:string|null,conflict_rule?:string,id:string,tenant_id:string,scope:string,provider:string,name:string,description:string,auth_type:string,config_json:string,secret_enc:string|null,secret_hint:string,webhook_secret_enc:string|null,status:string,health:string,last_ok_at:string|null,last_sync_at:string|null,last_error:string,sync_minutes:number,pages_json:string,roles_json:string,allowed_tools_json:string,mutating_tools_json:string,tools_json:string,resources_json:string,field_map_json:string,created_by:string,created_at:string,updated_by:string,updated_at:string};
 export type Secrets={secret?:string,clientSecret?:string,accessToken?:string,refreshToken?:string,expiresAt?:number};
 export const typeOf=(c:ConnectorRow)=>connectorTypeById.get(c.provider) as ConnectorType;
 export const configOf=(c:ConnectorRow)=>parseJson<Record<string,string>>(c.config_json,{});
@@ -39,7 +41,9 @@ export async function oauthApp(c:ConnectorRow,t:ConnectorType){
  if(t.family&&c.tenant_id!==PLATFORM_SCOPE){const p=await first<ConnectorRow>('SELECT * FROM connectors WHERE tenant_id=? AND provider IN (?,?) AND status!=\'disabled\' ORDER BY updated_at DESC LIMIT 1',PLATFORM_SCOPE,t.family==='microsoft'?'microsoft365':'google-workspace',t.family==='microsoft'?'entra':'gmail');if(p){const pc=configOf(p),ps=await secretsOf(p);if(pc.clientId)return {clientId:pc.clientId,clientSecret:ps.clientSecret||''}}}
  throw new HttpError(400,'No OAuth app is configured. Enter a client ID and secret, or ask the Platform Owner to add a platform app registration.');
 }
-export function oauthUrls(c:ConnectorRow,t:ConnectorType){const cfg=configOf(c);if(t.oauth){const dir=encodeURIComponent(cfg.directory||'organizations');return {authorize:t.oauth.authorize.replace('{directory}',dir),token:t.oauth.token.replace('{directory}',dir),scopes:(cfg.scopes?cfg.scopes.split(/\s+/):t.oauth.scopes),test:t.oauth.test,base:t.oauth.base}}return {authorize:safeUrl(cfg.authorizeUrl,'Authorization URL'),token:safeUrl(cfg.tokenUrl,'Token URL'),scopes:(cfg.scopes||'').split(/\s+/).filter(Boolean),test:cfg.testPath?`${safeUrl(cfg.baseUrl,'Base URL')}${cfg.testPath}`:safeUrl(cfg.baseUrl,'Base URL'),base:safeUrl(cfg.baseUrl,'Base URL')}}
+const override=(url:string)=>{const e=env as unknown as Record<string,string|undefined>;return url.replace('https://login.microsoftonline.com',e.MS_LOGIN_BASE||'https://login.microsoftonline.com').replace('https://graph.microsoft.com',e.MS_GRAPH_BASE||'https://graph.microsoft.com').replace('https://accounts.google.com',e.GOOGLE_AUTH_BASE||'https://accounts.google.com').replace('https://oauth2.googleapis.com',e.GOOGLE_AUTH_BASE||'https://oauth2.googleapis.com').replace('https://www.googleapis.com',e.GOOGLE_API_BASE||'https://www.googleapis.com').replace('https://gmail.googleapis.com',e.GOOGLE_API_BASE||'https://gmail.googleapis.com')};
+export const apiBase=(c:ConnectorRow)=>{const t=typeOf(c);return override(t.family==='microsoft'?'https://graph.microsoft.com/v1.0':t.family==='google'?'https://www.googleapis.com':oauthUrls(c,t).base)};
+export function oauthUrls(c:ConnectorRow,t:ConnectorType){const cfg=configOf(c);if(t.oauth){const dir=encodeURIComponent(cfg.directory||'organizations');const caps=cfg.capabilities?cfg.capabilities.split(',').filter(Boolean):[];const chosen=caps.length?[...(t.family==='microsoft'?['offline_access','User.Read']:['openid','email']),...scopesFor(t.family,caps)]:null;return {authorize:override(t.oauth.authorize.replace('{directory}',dir)),token:override(t.oauth.token.replace('{directory}',dir)),scopes:chosen||(cfg.scopes?cfg.scopes.split(/\s+/):t.oauth.scopes),test:override(t.oauth.test),base:override(t.oauth.base)}}return {authorize:safeUrl(cfg.authorizeUrl,'Authorization URL'),token:safeUrl(cfg.tokenUrl,'Token URL'),scopes:(cfg.scopes||'').split(/\s+/).filter(Boolean),test:cfg.testPath?`${safeUrl(cfg.baseUrl,'Base URL')}${cfg.testPath}`:safeUrl(cfg.baseUrl,'Base URL'),base:safeUrl(cfg.baseUrl,'Base URL')}}
 async function accessToken(c:ConnectorRow){
  const s=await secretsOf(c);if(!s.accessToken)throw new HttpError(409,`${c.name} is not connected yet. Use Connect to sign in.`);
  if(s.expiresAt&&s.expiresAt<Date.now()+60000&&s.refreshToken){
@@ -97,7 +101,9 @@ export async function mcpCall(c:ConnectorRow,tool:string,args:Record<string,unkn
 
 // ── Use from pages (widgets, assistant) ──
 export function canUseConnector(u:Member,c:ConnectorRow,page:string){
- if(c.status==='disabled'||c.tenant_id!==u.tenantId)return false;
+ if(c.status==='disabled'||c.paused||c.tenant_id!==u.tenantId)return false;
+ if(c.scope==='user')return c.owner_member_id===u.id;
+ if(c.scope==='department'&&u.role!=='admin'&&(configOf(c).department||'').toLowerCase()!==u.department.toLowerCase())return false;
  if(!hasAction(u,'connectors','use_connectors')&&u.role!=='admin')return false;
  const pages=parseJson<string[]>(c.pages_json,[]),roles=parseJson<string[]>(c.roles_json,[]);
  if(!pages.includes(page))return false;

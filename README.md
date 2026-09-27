@@ -19,7 +19,11 @@ See [`docs/feature-matrix.md`](docs/feature-matrix.md) for the status of every f
 | **Inventory** | Items, stores, receipts/issues/transfers/adjustments/returns, batch/serial, reorder alerts. |
 | **Maintenance** | Preventive plans, recurring schedules, work orders, technicians, parts and costs, completion evidence. |
 | **People** | Directory, org chart, departments (codes, heads, cost centres, hierarchy, history, import), **Manage users** (invitations, statuses, bulk actions, import, activity report). |
-| **Spaces / Files** | Department and company spaces, versioned files with visibility. |
+| **Spaces** | Company, department, project and custom hubs: announcements (targeting, scheduling, acknowledgement, receipts, approval), pages, files, projects, tasks, messages, members, calendar, activity. |
+| **Files** | Audience-based access, resumable uploads, versions, recycle bin, signed links, and background processing (scan, text extraction, Whisper transcripts, AI summaries with citations). |
+| **Projects** | Lifecycles with approval gates, plans, tasks, Gantt with critical path, risks/issues, IT delivery and site records, and finance from linked purchasing records. |
+| **Tasks** | One task list across personal, department, project and space work: list, board, calendar, timeline, workload. |
+| **Messages** | Company, department, project, group and direct conversations with threads, attachments, voice notes and moderation. |
 | **Reports** | Ten workspace-scoped reports with CSV export. |
 | **Admin** | Company settings and numbering, **Roles & permissions** (templates, actions, scopes, preview), access overrides, activity and security log. |
 | **Platform** | Platform Owner only: workspaces, provisioning, modules, limits, support sessions, platform audit. |
@@ -57,6 +61,10 @@ All schema changes are additive migrations in `drizzle/`; nothing is dropped or 
 - `0009_page_catalog_ai_connectors.sql` — `roles.pages_json` (role page lists), `platform_settings` (catalog overrides, packages, AI default), `ai_providers`, `ai_conversations`, `ai_messages`, `ai_usage`, `connectors`, `connector_logs`, `oauth_states`, `app_pages`, `app_page_versions`, `page_templates`. Additive only.
 - `0010_lookups_knowledge.sql` — `lookups` (company pick lists) and `knowledge_documents` (knowledge index bookkeeping).
 - `0011_knowledge_vectors.sql` — `knowledge_chunks` (per-company vectors when Vectorize is not bound), `ai_providers.embedding_model`, index metadata columns.
+- `0012_collaboration_projects.sql` — groups, spaces, file links/events/favorites/artifacts, resumable uploads, the background `jobs` queue, page revisions, announcement receipts, reactions, projects (members, workflows, templates, records, costs, stage history), tasks (assignees, checklists, dependencies, time), channels and messages (bookmarks, reports), connector links and idempotency keys; new nullable columns on files, folders, pages, purchase documents, budgets, assets and connectors. Additive only; existing rows keep working through their old visibility.
+- `0013_files_archive_task_templates.sql` — `files.archived_at/archived_by` and `task_templates`. Additive only.
+
+Background work (file processing, scheduled announcements, reminders, connector syncs) runs from the `jobs` table right after the request that queues it and from a throttled sweep on later requests; no Cron Trigger is required.
 
 ## Pages, roles, AI and connectors
 
@@ -88,9 +96,26 @@ Then open **Admin › AI settings › Knowledge index › Rebuild** once per com
 
 ## Deploying (Cloudflare Workers)
 
-```bash
+**One-time account setup**
+
+1. Enable R2 in the Cloudflare dashboard (R2 Object Storage → enable; Cloudflare asks for a payment method even on the free tier). Until then `npm run deploy` fails with code 10042.
+2. Create the resources:
+
+```powershell
 npx wrangler login
-D1_DATABASE_ID=<existing database_id> npm run build
+npx wrangler d1 create one-workspace                 # note the database_id it prints
+npx wrangler r2 bucket create one-workspace-files
+npx wrangler vectorize create one-workspace-knowledge --dimensions=768 --metric=cosine   # optional: vector search
+```
+
+**Every deploy** (PowerShell shown; the build writes the bindings into `dist/server/wrangler.json`, so set the variables before `npm run build`):
+
+```powershell
+$env:D1_DATABASE_ID="<database_id from d1 create>"
+$env:VECTORIZE_INDEX="one-workspace-knowledge"   # optional
+$env:CF_WORKERS_AI="1"                          # optional: embeddings and OCR
+npm run build
+npx wrangler d1 export DB --remote --config dist/server/wrangler.json --output backup.sql   # back up (skip on the first deploy)
 npm run db:migrate:remote        # applies only migrations not yet applied
 npx wrangler secret put PLATFORM_SETUP_TOKEN --config dist/server/wrangler.json   # first deploy only
 npx wrangler secret put SECRETS_KEY --config dist/server/wrangler.json            # once; keep it stable
@@ -98,7 +123,9 @@ npx wrangler secret put GROQ_API_KEY --config dist/server/wrangler.json         
 npm run deploy
 ```
 
-For a new installation, first run `npx wrangler d1 create one-workspace` and `npx wrangler r2 bucket create one-workspace-files`. Back up production before migrating: `npx wrangler d1 export DB --remote --config dist/server/wrangler.json --output backup.sql`.
+In bash, set the variables inline (`D1_DATABASE_ID=… npm run build`). The Worker keeps its `*.workers.dev` address unless you build with `WORKERS_DEV=0` (custom domain only). Without `D1_DATABASE_ID` the build uses a local placeholder id and remote migrations fail with code 7404.
+
+**Local database after pulling new code:** run `npm run db:migrate:local`. If an older local database has the tables but an empty `d1_migrations` history, back up `.wrangler/state`, record the migrations already present in `d1_migrations`, then apply the rest.
 
 ## Local development and tests
 

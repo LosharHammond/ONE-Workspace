@@ -194,3 +194,31 @@ export function TagPicker({values,options,onChange,placeholder}:{values:string[]
  const [q,setQ]=useState('');const list=options.filter(o=>!values.includes(o)&&o.toLowerCase().includes(q.toLowerCase())).slice(0,8);
  return <><div className="tag-input">{values.map(v=><span key={v} className="tag">{v}<button type="button" aria-label={`Remove ${v}`} onClick={()=>onChange(values.filter(x=>x!==v))}><Icon name="X" size={12}/></button></span>)}<input value={q} onChange={e=>setQ(e.target.value)} placeholder={values.length?'Add more…':placeholder} onKeyDown={e=>{if(e.key==='Enter'&&q.trim()){e.preventDefault();onChange([...values,list[0]||q.trim()]);setQ('')}}}/></div>{q&&list.length>0&&<div className="tag-suggest">{list.map(o=><button type="button" key={o} onClick={()=>{onChange([...values,o]);setQ('')}}>{o}</button>)}</div>}</>;
 }
+// ── Audience picker (content access) ──────────────────────────────────────
+// Used by files, folders, announcements, tasks and projects. The selected audience is always shown in words
+// before saving; the server validates it again.
+type AclValue={mode:string,departments?:string[],people?:string[],roles?:string[],groups?:string[],locations?:string[],projectId?:string|null,spaceId?:string|null,editors?:string[]};
+let groupCache:Promise<{id:string,name:string,code:string}[]>|null=null;
+export function useGroups(){const [g,setG]=useState<{id:string,name:string,code:string}[]>([]);useEffect(()=>{groupCache??=fetch('/api/groups').then(r=>r.json() as Promise<{groups?:{id:string,name:string,code:string,status:string}[]}>).then(d=>(d.groups||[]).filter(x=>x.status==='active')).catch(()=>[]);groupCache.then(setG)},[]);return g}
+export function resetGroupCache(){groupCache=null}
+export function AudiencePicker({value,onChange,projects,spaces,modes,note}:{value:AclValue,onChange:(v:AclValue)=>void,projects?:{id:string,name:string}[],spaces?:{id:string,name:string}[],modes?:string[],note?:ReactNode}){
+ const {s}=useApp();const groups=useGroups();
+ const all:[string,string][]=[['private','Only me'],['department','My department'],['departments','Selected departments'],['people','Selected people'],['roles','Selected roles'],['groups','Selected groups'],['locations','Selected locations'],['project','Project team'],['space','Space members'],['company','Everyone in the company']];
+ const opts=all.filter(([m])=>(!modes||modes.includes(m))&&(m!=='project'||projects?.length)&&(m!=='space'||spaces?.length));
+ const people=s.people.filter(p=>p.active);const roleOpts=[...s.roles.map(r=>({id:r.id,name:r.name})),{id:'manager',name:'Department Heads (type)'},{id:'employee',name:'Standard Users (type)'},{id:'viewer',name:'Viewers (type)'}];
+ const nameOf=(list:{id:string,name:string}[],id:string)=>list.find(x=>x.id===id)?.name||id;
+ const summary=value.mode==='department'?`Everyone in ${value.departments?.[0]||s.user.department||'your department'}`:value.mode==='departments'?`Departments: ${(value.departments||[]).join(', ')||'none chosen'}`:value.mode==='people'?`People: ${(value.people||[]).map(i=>nameOf(people,i)).join(', ')||'none chosen'}`:value.mode==='roles'?`Roles: ${(value.roles||[]).map(i=>nameOf(roleOpts,i)).join(', ')||'none chosen'}`:value.mode==='groups'?`Groups: ${(value.groups||[]).map(i=>nameOf(groups,i)).join(', ')||'none chosen'}`:value.mode==='locations'?`Locations: ${(value.locations||[]).join(', ')||'none chosen'}`:value.mode==='project'?`Team of ${nameOf(projects||[],value.projectId||'')||'a project'}`:value.mode==='space'?`Members of ${nameOf(spaces||[],value.spaceId||'')||'a space'}`:value.mode==='company'?`Everyone in ${s.tenant.name} (not the public internet)`:'Only you (and Company Admins)';
+ const set=(k:keyof AclValue,v:unknown)=>onChange({...value,[k]:v});
+ return <div className="audience">
+  <Field label="Who can see this"><select aria-label="Audience" value={value.mode} onChange={e=>{const m=e.target.value;onChange({mode:m,...(m==='department'?{departments:[s.user.department]}:{}),...(m==='project'?{projectId:projects?.[0]?.id||null}:{}),...(m==='space'?{spaceId:spaces?.[0]?.id||null}:{}),editors:value.editors})}}>{opts.map(([m,l])=><option key={m} value={m}>{l}</option>)}</select></Field>
+  {value.mode==='departments'&&<Field label="Departments"><TagPicker values={value.departments||[]} options={s.departments.map(d=>d.name)} onChange={v=>set('departments',v)} placeholder="Choose departments"/></Field>}
+  {value.mode==='people'&&<Field label="People"><TagPicker values={(value.people||[]).map(i=>nameOf(people,i))} options={people.map(p=>p.name)} onChange={v=>set('people',v.map(n=>people.find(p=>p.name===n)?.id).filter(Boolean))} placeholder="Choose people"/></Field>}
+  {value.mode==='roles'&&<Field label="Roles"><TagPicker values={(value.roles||[]).map(i=>nameOf(roleOpts,i))} options={roleOpts.map(r=>r.name)} onChange={v=>set('roles',v.map(n=>roleOpts.find(r=>r.name===n)?.id).filter(Boolean))} placeholder="Choose roles"/></Field>}
+  {value.mode==='groups'&&<Field label="Groups"><TagPicker values={(value.groups||[]).map(i=>nameOf(groups,i))} options={groups.map(g=>g.name)} onChange={v=>set('groups',v.map(n=>groups.find(g=>g.name===n)?.id).filter(Boolean))} placeholder={groups.length?'Choose groups':'No groups yet'}/></Field>}
+  {value.mode==='locations'&&<Field label="Locations"><TagPicker values={value.locations||[]} options={s.locations.map(l=>l.path)} onChange={v=>set('locations',v)} placeholder="Choose locations"/></Field>}
+  {value.mode==='project'&&<Field label="Project"><select value={value.projectId||''} onChange={e=>set('projectId',e.target.value)}>{(projects||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>}
+  {value.mode==='space'&&<Field label="Space"><select value={value.spaceId||''} onChange={e=>set('spaceId',e.target.value)}>{(spaces||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></Field>}
+  <p className="audience-summary" role="status"><Icon name={value.mode==='company'?'Globe':value.mode==='private'?'Lock':'Users'} size={14}/> <span>Visible to: <b>{summary}</b></span></p>
+  {note}
+ </div>;
+}

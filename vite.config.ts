@@ -8,6 +8,9 @@ const localBindingConfig = {
   name: process.env.WORKER_NAME || "one-workspace",
   main: "vinext/server/fetch-handler",
   compatibility_flags: ["nodejs_compat"],
+  // Keep the *.workers.dev URL unless a custom domain is used (WORKERS_DEV=0); otherwise the deployed
+  // Worker would have no address at all.
+  workers_dev: process.env.WORKERS_DEV !== "0",
   d1_databases: [
     {
       binding: "DB",

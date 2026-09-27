@@ -34,10 +34,13 @@ export const pageActions:Record<string,string[]>={
  assistant:['view','run_ai'],
  connectors:['view','configure','use_connectors'],
  'app-pages':['view','create','update','delete','publish'],
+ projects:['view','create','update','delete','approve','assign','export','configure'],
+ tasks:['view','create','update','delete','assign','export'],
+ messages:['view','create','moderate','export'],
 };
 // Pages every role keeps (the home page); other pages must be on a strict role's page list.
 export const alwaysPages=['overview'];
-export const pageLabels:Record<string,string>={overview:'Home',schedules:'Schedules & maintenance',reports:'Reports',people:'People directory',knowledge:'Department spaces',locations:'Locations',assets:'Assets',maintenance:'Tickets',requests:'Purchase requisitions',procurement:'Purchase orders',suppliers:'Vendors',inventory:'Inventory',receipts:'Goods receipts',budgets:'Budgets',documents:'Files & documents',research:'Consumer research',it:'IT & CCTV storage','company-data':'Data hub',audit:'Activity log',settings:'Administration',assistant:'ONE (AI assistant)',connectors:'Connectors','app-pages':'Custom pages'};
+export const pageLabels:Record<string,string>={overview:'Home',schedules:'Schedules & maintenance',reports:'Reports',people:'People directory',knowledge:'Department spaces',locations:'Locations',assets:'Assets',maintenance:'Tickets',requests:'Purchase requisitions',procurement:'Purchase orders',suppliers:'Vendors',inventory:'Inventory',receipts:'Goods receipts',budgets:'Budgets',documents:'Files & documents',research:'Consumer research',it:'IT & CCTV storage','company-data':'Data hub',audit:'Activity log',settings:'Administration',assistant:'ONE (AI assistant)',connectors:'Connectors','app-pages':'Custom pages',projects:'Projects',tasks:'Tasks',messages:'Messages'};
 
 export function departmentKey(value:string){const v=(value||'').toLowerCase().replace(/[^a-z0-9]/g,'');const groups:Record<string,string[]>={it:['it','itdepartment','informationtechnology','informationtechnologydepartment'],hr:['hr','hrandadmin','humanresource','humanresources','humanresourcemanagement','peopleculture','peopleandculture'],finance:['finance','accounting','accounts'],research:['consumerinsights','consumerinsightsresearch','consumerinsightsandresearch','consumerresearch','researchdevelopment','researchanddevelopment','rd'],warehouse:['warehouse','fgwarehouse','stores','store','itstore','unit4warehouse','shitowarehouse'],sales:['sales','salesdistribution','salesanddistribution','businessstrategistsales','export','businessstrategy'],quality:['quality','qualityassurance','microbiology'],production:['manufacturing','production','groundnut','shito','shitospices','spices','inprocess'],logistics:['logistics','supplychainlogistics','supplychainandlogistics'],procurement:['procurement','purchase','purchasing','purchasedepartment']};return Object.keys(groups).find(k=>groups[k].includes(v))||v}
 
@@ -52,8 +55,15 @@ export function defaultScope(u:AccessUser,page:string,action:string):Scope{
  if(['overview','settings'].includes(page)&&action==='view')return 'own';
  // AI works only on what the person can already open, so everyone may use it for themselves.
  if(page==='assistant')return 'own';
- if(page==='connectors')return action==='use_connectors'&&u.role==='manager'?'department':'none';
+ // Connectors: people see the connectors enabled for them and their own personal connections.
+ if(page==='connectors'){if(action==='view')return u.role==='viewer'?'none':'own';if(action==='use_connectors')return u.role==='manager'?'department':'none';return 'none'}
  if(page==='app-pages')return action==='view'?'all':'none';
+ // Projects: people see their department's projects (and any project they are on); heads create and approve.
+ if(page==='projects'){if(action==='view')return 'department';if(u.role==='viewer')return 'none';if(['create','update','assign','export'].includes(action))return u.role==='manager'?'department':action==='export'?'department':'none';if(action==='approve')return u.role==='manager'?'department':'none';return 'none'}
+ // Tasks: everyone plans their own work; heads assign within their department.
+ if(page==='tasks'){if(action==='view')return 'department';if(u.role==='viewer')return 'none';if(action==='assign'||action==='export')return u.role==='manager'?'department':action==='export'?'own':'none';return 'own'}
+ // Messages: channel membership decides who reads what; heads moderate their department's channels.
+ if(page==='messages'){if(action==='view'||action==='create')return u.role==='viewer'&&action==='create'?'none':'all';if(action==='moderate')return u.role==='manager'?'department':'none';return 'none'}
  if(page==='settings'&&action==='manage_members')return u.role==='manager'?'department':'none';
  if(page==='audit')return u.role==='manager'?'department':'none';
  if(page==='company-data'||(page==='it'&&u.role==='viewer'))return 'none';

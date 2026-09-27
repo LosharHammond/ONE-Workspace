@@ -85,6 +85,20 @@
       "when": 1790496440909,
       "tag": "0011_knowledge_vectors",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1790498516955,
+      "tag": "0012_collaboration_projects",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1790513470421,
+      "tag": "0013_files_archive_task_templates",
+      "breakpoints": true
     }
   ]
 }

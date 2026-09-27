@@ -121,6 +121,8 @@ export const POST=route(async(req,u)=>{
     // Suggestions are validated before they are shown; unknown ids are dropped.
     if(def.id==='ticket.assignee'){const ok=(ctx.data.candidates as {id:string}[]).some(c=>c.id===data.assigneeId);if(!ok)data.assigneeId=null}
     if(def.id==='ticket.duplicates'){const ids=new Set((ctx.data.candidates as {id:string}[]).map(c=>c.id));data.duplicates=(Array.isArray(data.duplicates)?data.duplicates:[]).filter((d:any)=>ids.has(d?.id)).map((d:any)=>({...d,link:`#/tickets/${d.id}`}))}
+    // Draft tasks: at most 30, plain strings, valid dates only; nothing is created until the person applies them.
+    if(def.mutates==='tasks.create'){const d=/^d{4}-d{2}-d{2}$/;data.tasks=(Array.isArray(data.tasks)?data.tasks:[]).filter((t:any)=>t&&typeof t.title==='string'&&t.title.trim()).slice(0,30).map((t:any)=>({title:String(t.title).slice(0,200),description:String(t.description??'').slice(0,2000),dueDate:d.test(String(t.dueDate??''))?String(t.dueDate):'',milestone:t.milestone===true,assigneeHint:String(t.assigneeHint??'').slice(0,80)}))}
     if(def.id==='builder.layout')return {suggestion:{kind:def.mutates,data:validateLayout(data,true)},citations:citedFrom('',ctx.sources)};
     // JSON results are shown as previews; only kinds a page knows how to apply get an Apply button.
     return {suggestion:{kind:def.mutates||`info.${def.id}`,data},text:null,citations:citedFrom(JSON.stringify(data),ctx.sources)};

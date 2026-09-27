@@ -18,6 +18,9 @@ export const modules:ModuleDef[]=[
  {id:'integrations',label:'Connectors',description:'External apps, APIs and MCP servers.',pages:['connectors']},
  {id:'builder',label:'Page builder',description:'Custom pages and widgets.',pages:['app-pages']},
  {id:'data',label:'Data hub',description:'Imported registers.',pages:['company-data']},
+ {id:'projects',label:'Projects',description:'Project planning, finance and delivery.',pages:['projects']},
+ {id:'tasks',label:'Tasks',description:'Task planner.',pages:['tasks']},
+ {id:'messages',label:'Messages',description:'Company messaging.',pages:['messages']},
 ];
 export const moduleIds=modules.map(m=>m.id);
 // Modules that existed before page entitlements. Workspaces created then store only settings.modules;
@@ -26,7 +29,8 @@ export const legacyModules=['tickets','assets','inventory','maintenance','purcha
 
 // The company pages a workspace is entitled to (core pages are always available and not listed).
 export function entitledPages(settings:Record<string,unknown>):string[]{
- if(Array.isArray(settings.pages))return settings.pages.map(String).filter(p=>assignablePages.includes(p));
+ // Pages added to the catalog later (flag "autoGrant") are included unless the Platform Owner removed them.
+ if(Array.isArray(settings.pages)){const excluded=new Set(Array.isArray(settings.pagesExcluded)?settings.pagesExcluded.map(String):[]);const base=settings.pages.map(String).filter(p=>assignablePages.includes(p));return [...base,...assignablePages.filter(p=>!base.includes(p)&&!excluded.has(p)&&catalogById.get(p)?.flags.includes('autoGrant'))]}
  if(!Array.isArray(settings.modules))return [...assignablePages];
  const on=new Set((settings.modules as unknown[]).map(String));
  return modules.filter(m=>on.has(m.id)||!legacyModules.includes(m.id)).flatMap(m=>m.pages).filter(p=>catalogById.get(p)?.status!=='beta');

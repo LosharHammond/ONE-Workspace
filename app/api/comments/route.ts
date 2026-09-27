@@ -4,7 +4,7 @@ import {notify} from '../../server/notify';
 // Conversation threads on tickets, assets, purchase documents and pages. @mentions notify people by name.
 export const POST=route(async(req,u)=>{
  const b=await readBody(req);
- const type=oneOf(b.type,['ticket','asset','PR','PO','page'] as const,'item type'),id=idOf(b.id,'Item'),body=str(b.body,'Comment',6000);
+ const type=oneOf(b.type,['ticket','asset','PR','PO','page','task','project'] as const,'item type'),id=idOf(b.id,'Item'),body=str(b.body,'Comment',6000);
  const e=await visibleEntity(u,type,id);
  let internal=0;
  if(b.internal&&type==='ticket'){const t=(await all<TicketRow>('SELECT * FROM tickets WHERE id=? AND tenant_id=?',id,u.tenantId))[0];if(!canWorkTicket(u,t))throw new HttpError(403,'Only the resolving team can add internal notes.');internal=1}
@@ -15,4 +15,10 @@ export const POST=route(async(req,u)=>{
  const recipients=internal?people:[...e.notifyIds,...people];
  await notify(u,recipients,{kind:'comment',title:`${u.name} commented on ${e.title}`,body:body.slice(0,400),link:e.link},req);
  return {id:cid};
+});
+// Reading a thread requires the same visibility as the item itself (internal ticket notes are never listed here).
+export const GET=route(async(req,u)=>{
+ const url=new URL(req.url);const type=oneOf(url.searchParams.get('type'),['asset','PR','PO','page','task','project'] as const,'item type'),id=idOf(url.searchParams.get('id'),'Item');
+ await visibleEntity(u,type,id);
+ return {comments:await all('SELECT id,author_id AS authorId,body,created_at AS createdAt FROM comments WHERE tenant_id=? AND entity_type=? AND entity_id=? AND internal=0 ORDER BY created_at',u.tenantId,type,id)};
 });

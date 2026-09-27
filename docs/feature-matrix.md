@@ -136,10 +136,42 @@ Status key: **Working** (existed before and still works) · **New** (implemented
 | Forms pick from lists (tickets, assets, inventory, purchasing, vendors, people) with inline “Add new” for admins; locations picked from the location tree with inline add | New | E2E (session) + Manual | Existing records keep values that are no longer in a list (shown as “not in list”). The server does not reject values outside a list (imports keep working). |
 | Left navigation scrolls on short screens | Fixed | Manual | Compact tiles below 820 px height, labels hidden below 640 px. |
 
+## Collaboration: Spaces, Files, processing, projects, tasks, messaging, groups, connectors (migration 0012)
+
+| Feature | Status | Verified | Notes |
+|---|---|---|---|
+| Content access model (`acl_json`): only me, department(s), people, roles, groups, locations, project team, space members, company; editors; owner | New | E2E | One checker (`app/server/acl.ts`) used by lists, detail, download/preview, signed links, artifacts, search, AI context, notifications, messaging attachments and connector saves. Legacy rows map from their old visibility. Company Admins see everything in their company only. |
+| Staff uploads default to their department (private without one); audience shown before upload | New | E2E + Manual | |
+| Company-wide publishing policy (everyone / administrators approve) with an approval request | New | E2E | Files and announcements. |
+| Short-lived signed download links (HMAC, 5 min, issued only after the access check) | New | E2E | Tampered links refused. |
+| Files: folders, drag-and-drop, multi-file, resumable (R2 multipart), progress, previews, versions (view/restore/replace), metadata, tags, category, custom fields, search, filters, columns, bulk move/visibility/archive/download/delete/restore, image thumbnails, archive (migration 0013), favorites, recent, shared with me, department/project/company views, recycle bin, legal hold, purge with typed confirmation | New | E2E (versions, recycle bin, audiences) + Manual | Storage keys are `<workspace>/files/<file>/…`. |
+| File links to spaces, departments, projects, tasks, tickets, assets, PRs, POs, vendors, people, messages, pages, work orders | New | API | |
+| Background jobs: D1 queue with idempotency keys, claim locks, retries with exponential backoff, dead-lettering, admin retry | New | E2E | No Cron Trigger: due jobs run right after the request that queues them and from a throttled sweep (every 30 s of traffic). |
+| File processing: Uploaded → Queued → Scanning → Extracting/Transcribing → Summarizing → Ready / Partially processed / Failed / Retrying / Unsupported | New | E2E | Scan: EICAR, executables, scripts, extension/magic mismatch → quarantined to the recycle bin. |
+| Audio/video: Whisper transcript with timestamps, VTT/SRT, editable transcript (original kept), short and detailed summary, key points, decisions, action items, questions, chapters, entities | New | E2E (mock Whisper) | Whisper has no speaker labels; they can be added when editing. Recordings over 25 MB are stored but not transcribed. |
+| Documents: text/HTML/EML/CSV, DOCX/XLSX/PPTX, PDF text; summary with section citations, classification and tags; OCR via Workers AI when bound | Partial | E2E (text) | Scanned PDFs/images need the Workers AI binding; failures are reported, never fabricated. |
+| Generated artifacts inherit the file's access | New | E2E | |
+| Spaces as hubs at `#/spaces/:spaceId/:tab`: Overview, Announcements, Files, Pages, Projects, Tasks, Messages, Members, Calendar, Activity; company, department, project and custom spaces | New | E2E (hub API) + Manual | |
+| Announcements: audience targeting, rich text and media, draft/publish, scheduling, expiry, pinning, priority, mandatory acknowledgement, read receipts, comments, reactions, notifications, version history and restore, approval, archive/restore, recycle bin | New | E2E | |
+| Custom groups (Admin › Groups): create, edit, archive, restore, delete (refused while referenced), replace everywhere, owners, static members, dynamic rules, export, activity | New | E2E | Usable as audiences for files, pages, announcements, tasks, projects and channels. |
+| Projects: types, templates, lifecycle builder (stages, transitions, required fields, approval gates), team and roles, plan records, WBS tasks, milestones, dependencies, critical path, baselines, Gantt/timeline, Kanban, list, calendar, risks, issues, decisions, changes, lessons, meetings, files, discussion, activity | New | E2E + Manual | |
+| IT delivery records (requirements, epics, features, stories, bugs, sprints, releases, environments, tests, deployments) and site/service records (inspections, reports, defects, contractors, materials, equipment, certificates, handover, obligations, SLAs, RFQs) | New | E2E | Structured records with type-specific fields; no separate sprint board. |
+| Project finance from linked records only (PRs, POs, receipts, returns, invoices, payments, expenses, forecasts, logged time) | New | E2E (exact figures) | Requisitions carry a project; conversion and receipt keep it; assets created at receipt are linked. |
+| Tasks: personal, department, project, space, ticket and purchasing sources; subtasks, checklists, assignees, watchers, recurrence, reminders, approvals, dependencies with loop check, time tracking, workload, list/Kanban/calendar/timeline, bulk actions, CSV import/export | New | E2E + Manual | Task templates (personal, or shared by people who manage tasks) and server-side saved filters (migration 0013). |
+| Messaging: company, department, project, space, group, custom, announcement-only channels, DMs and group DMs; threads, mentions, reactions, edit, soft delete, attachments via Files, voice notes, search, pins, bookmarks, read receipts, typing, unread counts, notification levels, moderation, reports, retention, export, audit | New | E2E + Manual | Near-real-time by polling (4 s open conversation, 15 s channel list). Presence (active in the last 3 minutes) and read receipts can each be switched off by administrators. |
+| Connector levels: platform, company, department, personal; capability registry from granted scopes; least-privilege scope requests; pause/resume, conflict rule, background sync with retry/backoff/dead letter, logs, calls per hour | New | E2E (Microsoft mocks) | |
+| Outlook / Microsoft 365 and Gmail / Google mailbox: inbox, folders, search, read, drafts, send/reply/forward, move/categorise/delete, calendar view and meetings, contacts, save attachments to Files, link to records, create task/ticket from an email | New | E2E (Outlook via local Graph mocks) | Real Microsoft/Google tenants were not available here. Consequential actions need confirmation, carry idempotency keys and are audited. |
+| AI: summarize a space, file, thread; action items → draft tasks; project status, risks, finance, report, plan; related Outlook emails; overdue tasks; citations; permission-aware | New | E2E | Draft tasks are created only after the person confirms. |
+| Offline banner while the browser has no connection | New | Manual | Requests made while offline fail with a clear message; nothing is queued. |
+
 ## Deferred / limitations
 
 - **Row-level security**: D1 (SQLite) has none; isolation is enforced centrally in the API layer and covered by tests.
-- **Background jobs**: Workers cron is not configured, so maintenance work orders and reorder alerts are generated on activity, not on a timer.
+- **Background jobs**: Workers cron is not configured. File processing, scheduled announcements, reminders and connector syncs use the D1 job queue, which runs right after requests and from a throttled sweep driven by traffic; with no traffic, due jobs wait until the next request.
+- **Real-time messaging** uses short polling, not WebSockets/Durable Objects.
+- **OCR** for scanned PDFs and images needs a Workers AI binding (`AI`); without it those files are marked unsupported.
+- **Speaker identification**: Whisper does not label speakers; labels can be added in the transcript editor.
+- **Microsoft/Google** were verified against local mocks of their token and Graph endpoints, not against real tenants.
 - **Stock concurrency**: two simultaneous issues of the last units could both pass the availability check.
 - **Custom fields** were not supported before and are not added.
 - **Email delivery** needs `RESEND_API_KEY` + `MAIL_FROM`; without it, links are shown once to the inviter.

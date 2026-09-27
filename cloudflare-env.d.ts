@@ -16,6 +16,11 @@ declare namespace Cloudflare {
     // Development/testing only: point the platform Groq provider at an OpenAI-compatible endpoint.
     AI_GROQ_BASE_URL?: string;
     // Optional: Workers AI (embeddings) and Vectorize (vector index), bound when D1/AI setup is done.
+    // Development/testing only: point Microsoft/Google OAuth and APIs at local mocks.
+    MS_LOGIN_BASE?: string;
+    MS_GRAPH_BASE?: string;
+    GOOGLE_AUTH_BASE?: string;
+    GOOGLE_API_BASE?: string;
     AI?: unknown;
     VECTORIZE?: unknown;
   }

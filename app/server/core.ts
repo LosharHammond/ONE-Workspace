@@ -3,6 +3,7 @@ import type {Member} from './policy';
 import type {Item} from '../data';
 import {roleRules,type AccessRule} from '../access-policy';
 import {blockedPages,modules as moduleCatalog} from '../modules';
+import {loadMemberships} from './acl';
 
 export class HttpError extends Error{constructor(public status:number,message:string){super(message)}}
 export function db(){if(!env.DB)throw new HttpError(503,'Workspace database is unavailable. Please try again later.');return env.DB}
@@ -68,6 +69,8 @@ async function withAccess(u:Member){
  const legacy=await first('SELECT member_id FROM research_access WHERE member_id=?',u.id);
  if(legacy)for(const action of ['view','upload','process','download'])if(!rules.some(r=>r.page==='research'&&r.action===action&&r.subject_type==='user'&&r.subject_id===u.id))rules.push({subject_type:'user',subject_id:u.id,department:'*',page:'research',action,effect:'allow',scope:'all'});
  u.rules=rules;
+ // Group, project and space memberships drive content access (files, announcements, tasks, channels).
+ await loadMemberships(u);
  return u;
 }
 export function parseJson<T>(s:string|null|undefined,fallback:T):T{try{return s?JSON.parse(s) as T:fallback}catch{return fallback}}
@@ -116,6 +119,7 @@ export function route(fn:(req:Request,u:Member)=>Promise<unknown>,opts:{module?:
  if(opts.module){const mod=moduleCatalog.find(m=>m.id===opts.module);if(mod&&mod.pages.every(p=>u.disabledPages?.includes(p)))throw new HttpError(404,'This module is not enabled for your workspace.')}
  if(u.supportSessionId)await platformAuditStatement(u,req.method==='GET'?'support.view':'support.change',req).run();
  const out=await fn(req,u);
+ (await import('./jobs')).maybeKick();
  return out instanceof Response?out:json(out??{ok:true});
 }catch(e){return failure(e)}}}
 

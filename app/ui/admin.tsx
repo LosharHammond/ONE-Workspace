@@ -7,6 +7,7 @@ import CompanyData from '../company-data';
 import {modules as moduleCatalog} from '../modules';
 import {ConnectorCenter,AiSettings} from './integrations';
 import Lists from './lists';
+import Groups from './groups';
 
 export default function Admin({parts}:{parts:string[]}){
  const {s,can}=useApp();const admin=s.user.role==='admin';
@@ -19,6 +20,7 @@ export default function Admin({parts}:{parts:string[]}){
  if(view==='connectors'&&(admin||can('connectors')))return <ConnectorCenter scope="company" parts={parts.slice(1)}/>;
  if(view==='ai'&&admin)return <AiSettings/>;
  if(view==='lists'&&(admin||can('settings','configure')))return <Lists listId={parts[1]}/>;
+ if(view==='groups'&&(admin||can('settings','configure')))return <Groups openId={parts[1]}/>;
  if(admin)return <Company/>;
  return <div className="page"><Empty icon="Lock" title="Administrator access required"/></div>;
 }

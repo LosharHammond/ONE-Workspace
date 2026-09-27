@@ -41,12 +41,16 @@ export async function knowledgeInfo(tenantId:string){
 // ── What gets indexed (system view; permissions are applied at query time) ──
 type Doc={type:SourceType,id:string,text:string};
 const clip=(s:unknown,n:number)=>String(s??'').replace(/\s+/g,' ').trim().slice(0,n);
-const sources:{type:SourceType,table:string,sql:string,text:(r:any)=>string,updated:boolean}[]=[
+const sources:{type:SourceType,table:string,sql:string,text:(r:any)=>string,updated:boolean,where?:string}[]=[
  {type:'ticket',table:'tickets',sql:'id,number,title,description,category,subcategory,department,status,priority,location',updated:true,text:r=>`Ticket ${r.number}: ${r.title}. Category ${r.category} ${r.subcategory}. Department ${r.department}. Status ${r.status}, priority ${r.priority}. Location ${r.location}. ${clip(r.description,3000)}`},
  {type:'page',table:'pages',sql:'id,title,body,department,kind',updated:true,text:r=>`${r.kind==='announcement'?'Announcement':'Page'} ${r.title} (${r.department||'Company'}): ${clip(r.body,6000)}`},
  {type:'asset',table:'assets',sql:'id,code,name,category,subcategory,brand,model,serial,status,location,department,notes,vendor',updated:true,text:r=>`Asset ${r.code}: ${r.name}. ${r.category} ${r.subcategory}, ${r.brand} ${r.model}, serial ${r.serial}. Status ${r.status}. Location ${r.location}. Department ${r.department}. Vendor ${r.vendor}. ${clip(r.notes,1500)}`},
  {type:'doc',table:'purchase_docs',sql:'id,kind,number,title,justification,department,status,total,currency',updated:true,text:r=>`${r.kind==='PO'?'Purchase order':'Purchase requisition'} ${r.number}: ${r.title}. Department ${r.department}, status ${r.status}, total ${r.currency} ${r.total}. ${clip(r.justification,2500)}`},
- {type:'file',table:'files',sql:'id,name,description,tags,department',updated:true,text:r=>`File ${r.name} (${r.department||'company'}), tags ${r.tags}. ${clip(r.description,1500)}`},
+ // Files include their generated summary and the start of their extracted text or transcript.
+ {type:'file',table:'files',sql:"t.id,t.name,t.description,t.tags,t.department,(SELECT content FROM file_artifacts a WHERE a.tenant_id=t.tenant_id AND a.file_id=t.id AND a.kind='summary' ORDER BY a.created_at DESC LIMIT 1) AS summary,(SELECT substr(content,1,6000) FROM file_artifacts a WHERE a.tenant_id=t.tenant_id AND a.file_id=t.id AND a.kind='text' ORDER BY a.created_at DESC LIMIT 1) AS extracted",updated:true,where:'t.deleted_at IS NULL',text:r=>{let sum='';try{const j=JSON.parse(r.summary||'{}');sum=[j.short,j.detailed].filter(Boolean).join(' ')}catch{/* none */}return `File ${r.name} (${r.department||'company'}), tags ${r.tags}. ${clip(r.description,800)} ${clip(sum,2500)} ${clip(r.extracted,5000)}`}},
+ {type:'task',table:'tasks',sql:'t.id,t.title,t.description,t.status,t.type,t.tags,t.due_date',updated:true,where:'t.deleted_at IS NULL',text:r=>`Task ${r.title} (${r.type}), status ${r.status}, due ${r.due_date||'—'}, tags ${r.tags}. ${clip(r.description,2000)}`},
+ {type:'project',table:'projects',sql:'t.id,t.code,t.name,t.type,t.stage,t.description,t.business_case,t.department',updated:true,text:r=>`Project ${r.code} ${r.name} (${r.type}), stage ${r.stage}, department ${r.department}. ${clip(r.description,2500)} ${clip(r.business_case,1500)}`},
+ {type:'message',table:'messages',sql:'t.id,t.body,t.created_at',updated:false,where:'t.deleted_at IS NULL AND t.hidden=0',text:r=>`Message ${String(r.created_at).slice(0,16)}: ${clip(r.body,1500)}`},
  {type:'order',table:'work_orders',sql:'id,number,title,description,status,department',updated:true,text:r=>`Work order ${r.number}: ${r.title}. Status ${r.status}. Department ${r.department}. ${clip(r.description,2000)}`},
  {type:'item',table:'inventory_items',sql:'id,sku,name,category,unit,notes',updated:true,text:r=>`Stock item ${r.sku}: ${r.name}, category ${r.category}, unit ${r.unit}. ${clip(r.notes,800)}`},
  {type:'vendor',table:'vendors',sql:'id,name,category,notes',updated:false,text:r=>`Vendor ${r.name}, supplies ${r.category}. ${clip(r.notes,800)}`},
@@ -62,11 +66,12 @@ export async function indexChanges(tenantId:string,o:{limit?:number,since?:strin
  const pending:Doc[]=[];let remaining=0;
  for(const s of sources){
   const cond=since?'(kd.id IS NULL OR kd.indexed_at<?)':s.updated?'(kd.id IS NULL OR kd.model<>? OR kd.indexed_at<t.updated_at)':'(kd.id IS NULL OR kd.model<>?)';
-  const extra=s.table==='members'?' AND t.active=1':'';
+  const extra=(s.table==='members'?' AND t.active=1':'')+(s.where?` AND ${s.where}`:'');
+  const cols=s.sql.includes('t.')?s.sql:s.sql.split(',').map(c=>'t.'+c).join(',');
   const cnt=await first<{n:number}>(`SELECT count(*) AS n FROM ${s.table} t LEFT JOIN knowledge_documents kd ON kd.tenant_id=t.tenant_id AND kd.source_type=? AND kd.source_id=t.id WHERE t.tenant_id=?${extra} AND ${cond}`,s.type,tenantId,since||e.model);
   remaining+=cnt?.n||0;
   if(pending.length>=limit||!cnt?.n)continue;
-  const rows=await all<any>(`SELECT ${s.sql.split(',').map(c=>'t.'+c).join(',')} FROM ${s.table} t LEFT JOIN knowledge_documents kd ON kd.tenant_id=t.tenant_id AND kd.source_type=? AND kd.source_id=t.id WHERE t.tenant_id=?${extra} AND ${cond} LIMIT ?`,s.type,tenantId,since||e.model,limit-pending.length);
+  const rows=await all<any>(`SELECT ${cols} FROM ${s.table} t LEFT JOIN knowledge_documents kd ON kd.tenant_id=t.tenant_id AND kd.source_type=? AND kd.source_id=t.id WHERE t.tenant_id=?${extra} AND ${cond} LIMIT ?`,s.type,tenantId,since||e.model,limit-pending.length);
   pending.push(...rows.map(r=>({type:s.type,id:String(r.id),text:s.text(r).replace(/\s+/g,' ').trim()})));
  }
  if(!pending.length){if(since)await prune(tenantId,since,store);return {available:true,processed:0,remaining:0,source:e.source,store}}

@@ -131,7 +131,7 @@ export const POST=route(async(req,u)=>{
    const current=enabledModules(settings);
    const mods=[...new Set([...asked,...current.filter(m=>!legacyModules.includes(m)&&!asked.includes(m))])];
    const {pages}=await validPages(pagesForModules(mods),t.plan,true);
-   await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,modules:mods,pages}),t.id),log('workspace.modules',t.id,{before:entitledPages(settings),after:pages}),stmt('INSERT INTO audit(id,action,actor,record_id,department,before_json,after_json,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?)',uid(),'Page entitlements changed by the Platform Owner',u.id,t.id,'Administration',JSON.stringify(entitledPages(settings)),JSON.stringify(pages),now(),t.id)]);
+   await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,modules:mods,pages,pagesExcluded:assignablePages.filter(p=>!pages.includes(p))}),t.id),log('workspace.modules',t.id,{before:entitledPages(settings),after:pages}),stmt('INSERT INTO audit(id,action,actor,record_id,department,before_json,after_json,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?)',uid(),'Page entitlements changed by the Platform Owner',u.id,t.id,'Administration',JSON.stringify(entitledPages(settings)),JSON.stringify(pages),now(),t.id)]);
    return {ok:true,pages};
   }
   case 'pages':case 'package':{
@@ -140,7 +140,7 @@ export const POST=route(async(req,u)=>{
    const {pages,added}=await validPages(input,t.plan,!!b.allowAbovePlan||action==='package');
    const before=entitledPages(settings);
    const mods=enabledModules({pages});
-   await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,pages,modules:mods}),t.id),log('workspace.pages',t.id,{before,after:pages,package:action==='package'?b.package:undefined}),stmt('INSERT INTO audit(id,action,actor,record_id,department,before_json,after_json,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?)',uid(),'Page entitlements changed by the Platform Owner',u.id,t.id,'Administration',JSON.stringify(before),JSON.stringify(pages),now(),t.id)]);
+   await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,pages,pagesExcluded:assignablePages.filter(p=>!pages.includes(p)),modules:mods}),t.id),log('workspace.pages',t.id,{before,after:pages,package:action==='package'?b.package:undefined}),stmt('INSERT INTO audit(id,action,actor,record_id,department,before_json,after_json,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?)',uid(),'Page entitlements changed by the Platform Owner',u.id,t.id,'Administration',JSON.stringify(before),JSON.stringify(pages),now(),t.id)]);
    return {ok:true,pages,added,removed:before.filter(p=>!pages.includes(p))};
   }
   case 'limits':{
