@@ -37,10 +37,14 @@ export const pageActions:Record<string,string[]>={
  projects:['view','create','update','delete','approve','assign','export','configure'],
  tasks:['view','create','update','delete','assign','export'],
  messages:['view','create','moderate','export'],
+ graph:['view','export'],
+ business:['view','create','update','delete','export'],
+ studio:['view','create','update','delete','publish','configure'],
+ agents:['view','run','create','update','approve','configure'],
 };
 // Pages every role keeps (the home page); other pages must be on a strict role's page list.
 export const alwaysPages=['overview'];
-export const pageLabels:Record<string,string>={overview:'Home',schedules:'Schedules & maintenance',reports:'Reports',people:'People directory',knowledge:'Department spaces',locations:'Locations',assets:'Assets',maintenance:'Tickets',requests:'Purchase requisitions',procurement:'Purchase orders',suppliers:'Vendors',inventory:'Inventory',receipts:'Goods receipts',budgets:'Budgets',documents:'Files & documents',research:'Consumer research',it:'IT & CCTV storage','company-data':'Data hub',audit:'Activity log',settings:'Administration',assistant:'ONE (AI assistant)',connectors:'Connectors','app-pages':'Custom pages',projects:'Projects',tasks:'Tasks',messages:'Messages'};
+export const pageLabels:Record<string,string>={business:'Goals & customers',graph:'Work Graph',studio:'Workspace Studio',agents:'AI workforce',overview:'Home',schedules:'Schedules & maintenance',reports:'Reports',people:'People directory',knowledge:'Department spaces',locations:'Locations',assets:'Assets',maintenance:'Tickets',requests:'Purchase requisitions',procurement:'Purchase orders',suppliers:'Vendors',inventory:'Inventory',receipts:'Goods receipts',budgets:'Budgets',documents:'Files & documents',research:'Consumer research',it:'IT & CCTV storage','company-data':'Data hub',audit:'Activity log',settings:'Administration',assistant:'ONE (AI assistant)',connectors:'Connectors','app-pages':'Custom pages',projects:'Projects',tasks:'Tasks',messages:'Messages'};
 
 export function departmentKey(value:string){const v=(value||'').toLowerCase().replace(/[^a-z0-9]/g,'');const groups:Record<string,string[]>={it:['it','itdepartment','informationtechnology','informationtechnologydepartment'],hr:['hr','hrandadmin','humanresource','humanresources','humanresourcemanagement','peopleculture','peopleandculture'],finance:['finance','accounting','accounts'],research:['consumerinsights','consumerinsightsresearch','consumerinsightsandresearch','consumerresearch','researchdevelopment','researchanddevelopment','rd'],warehouse:['warehouse','fgwarehouse','stores','store','itstore','unit4warehouse','shitowarehouse'],sales:['sales','salesdistribution','salesanddistribution','businessstrategistsales','export','businessstrategy'],quality:['quality','qualityassurance','microbiology'],production:['manufacturing','production','groundnut','shito','shitospices','spices','inprocess'],logistics:['logistics','supplychainlogistics','supplychainandlogistics'],procurement:['procurement','purchase','purchasing','purchasedepartment']};return Object.keys(groups).find(k=>groups[k].includes(v))||v}
 
@@ -63,6 +67,14 @@ export function defaultScope(u:AccessUser,page:string,action:string):Scope{
  // Tasks: everyone plans their own work; heads assign within their department.
  if(page==='tasks'){if(action==='view')return 'department';if(u.role==='viewer')return 'none';if(action==='assign'||action==='export')return u.role==='manager'?'department':action==='export'?'own':'none';return 'own'}
  // Messages: channel membership decides who reads what; heads moderate their department's channels.
+ // Work Graph: everyone explores what they can already see (every node is re-checked); exports for managers.
+ // Goals, customers, contracts, services, meetings and decisions: everyone reads what each record's visibility allows; staff record their own; heads export.
+ if(page==='business')return action==='view'?'all':u.role==='viewer'?'none':action==='export'?(u.role==='manager'?'department':'none'):action==='delete'?(u.role==='manager'?'department':'own'):'department';
+ if(page==='graph')return action==='view'?'all':u.role==='manager'?'department':'none';
+ // Workspace Studio: everyone may use published apps (each app has its own role list); building is for administrators.
+ if(page==='studio')return action==='view'?'all':'none';
+ // AI workforce: staff may run agents published to them; building, approving and policies are administrator tasks.
+ if(page==='agents')return action==='view'||(action==='run'&&u.role!=='viewer')?'all':action==='approve'&&u.role==='manager'?'department':'none';
  if(page==='messages'){if(action==='view'||action==='create')return u.role==='viewer'&&action==='create'?'none':'all';if(action==='moderate')return u.role==='manager'?'department':'none';return 'none'}
  if(page==='settings'&&action==='manage_members')return u.role==='manager'?'department':'none';
  if(page==='audit')return u.role==='manager'?'department':'none';

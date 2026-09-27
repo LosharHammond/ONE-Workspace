@@ -22,5 +22,11 @@ export async function POST(req:Request){try{
  let event='';try{const d=JSON.parse(body);event=String(d?.event||d?.type||'').slice(0,60)}catch{/* not JSON */}
  await stmt("UPDATE connectors SET last_sync_at=?,health='healthy' WHERE id=?",now(),c.id).run();
  await logStatement(c,'webhook','webhook.received','ok',0,{event,bytes:body.length,excerpt:body.slice(0,300),untrusted:true}).run();
+ // Synced mode: each delivery becomes an event record (idempotent per delivery id or body hash), a Work Graph
+ // node with lineage, and a domain event that Studio automations can trigger on ("webhook received").
+ const delivery=(req.headers.get('X-OneWorkspace-Delivery')||'').slice(0,100)||[...new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(ts+body)))].slice(0,12).map(x=>x.toString(16).padStart(2,'0')).join('');
+ const rid=crypto.randomUUID();const t=now();
+ const ins=await stmt("INSERT INTO connector_records(id,tenant_id,connector_id,source_id,kind,title,body,url,source_updated_at,permissions_json,content_hash,deleted_at,last_verified_at,synced_at) VALUES(?,?,?,?,'event',?,?,'',?,'{\"connector\":\"enabled-people\"}',?,NULL,?,?) ON CONFLICT(tenant_id,connector_id,source_id) DO NOTHING",rid,c.tenant_id,c.id,`events:${delivery}`,(event||'Webhook event').slice(0,200),body.slice(0,2000),t,delivery,t,t).run();
+ if(ins.meta.changes)await stmt("INSERT INTO domain_events(id,tenant_id,type,entity_id,action,actor,payload_json,status,attempts,error,created_at) VALUES(?,?,'connector.webhook',?,?,?,?,'pending',0,'',?)",crypto.randomUUID(),c.tenant_id,rid,'webhook received','webhook',JSON.stringify({type:'external',connectorId:c.id,event,title:event||'Webhook event'}),t).run();
  return json({ok:true});
 }catch(e){return failure(e)}}

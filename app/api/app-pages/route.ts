@@ -1,6 +1,6 @@
 import {hasAction,departmentKey} from '../../access-policy';
 import {route,readBody,HttpError,all,first,stmt,batch,uid,now,str,idOf,auditStatement,platformAuditStatement,parseJson} from '../../server/core';
-import {validateLayout,filterLayout,widgetData} from '../../server/widgets';
+import {validateLayout,filterLayout,widgetData,assertWidgetsAllowed} from '../../server/widgets';
 import {PLATFORM_SCOPE} from '../../server/secrets';
 import type {Layout} from '../../widgets';
 import type {Member} from '../../server/policy';
@@ -51,7 +51,7 @@ export const POST=route(async(req,u)=>{
  }
  if(action==='save'){
   const id=b.id?idOf(b.id,'Page'):null;
-  const layout=validateLayout(b.layout);const layoutJson=JSON.stringify(layout);
+  const layout=validateLayout(b.layout);await assertWidgetsAllowed(layout);const layoutJson=JSON.stringify(layout);
   const title=str(b.title,'Title',120),description=str(b.description,'Description',300,false),icon=/^[A-Za-z0-9]{2,40}$/.test(String(b.icon))?String(b.icon):'LayoutGrid';
   const visibility=visibilityOf(b.visibility);const note=str(b.note,'Note',200,false);
   if(!id){

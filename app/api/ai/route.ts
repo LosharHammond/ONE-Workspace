@@ -1,7 +1,7 @@
 import {hasAction} from '../../access-policy';
 import {route,readBody,HttpError,all,first,stmt,batch,uid,now,str,idOf,oneOf,auditStatement,tenantOf,tenantSettings,parseJson,run} from '../../server/core';
 import {resolveAi,chat,chatJson,chatWithFallback,aiProviderCatalog,companyAiRow,platformAi,assertAiQuota,aiUsedThisMonth,aiLimit,usageStatement,AiError,type AiProvider,type AiMessage} from '../../server/ai';
-import {searchWorkspace,attention,contextRecord,keywords,type Hit} from '../../server/search';
+import {searchWorkspace,attention,contextRecord,keywords,routeGraphRef,type Hit} from '../../server/search';
 import {aiActions,buildAction} from '../../server/ai-actions';
 import {sealSecret,secretHint,safeUrl} from '../../server/secrets';
 import {rateLimit} from '../../server/auth';
@@ -142,8 +142,11 @@ export const POST=route(async(req,u)=>{
  await indexChanges(u.tenantId,{limit:25}).catch(()=>null);
  const lastUser=history.filter(h=>h.role==='user').slice(-1).map(h=>h.content).join(' ');
  const [onScreen,att,found,semantic]=await Promise.all([page?contextRecord(u,page):null,attention(u),searchWorkspace(u,keywords(question+' '+lastUser),5),vectorSearch(u,question,6).catch(()=>[] as Hit[])]);
+ // The Work Graph neighbourhood of the record on screen (only what this person can see).
+ const ref=page?routeGraphRef(page):null;let connected:Hit|null=null;
+ if(ref&&hasAction(u,'graph')){try{const {contextForAi}=await import('../../server/graph-context');const x=await contextForAi(u,ref.type,ref.id,30);connected={type:'Connected context',id:`ctx:${ref.id}`,title:'Records connected to the one on screen',sub:'',link:page!,text:x.text,score:98}}catch{connected=null}}
  const seen=new Set<string>(onScreen?[onScreen.id]:[]);
- const hits=[...(onScreen?[onScreen]:[]),...semantic.filter(h=>h.score>=0.35),...found.filter(h=>h.score>0)].filter(h=>{if(seen.has(h.id)&&h!==onScreen)return false;seen.add(h.id);return true});
+ const hits=[...(onScreen?[onScreen]:[]),...(connected?[connected]:[]),...semantic.filter(h=>h.score>=0.35),...found.filter(h=>h.score>0)].filter(h=>{if(seen.has(h.id)&&h!==onScreen)return false;seen.add(h.id);return true});
  const sources=packSources(hits);
  const messages:AiMessage[]=[{role:'system',content:systemPrompt(u,t.name)},...history.map(h=>({role:h.role==='assistant'?'assistant' as const:'user' as const,content:h.content.slice(0,3000)})),{role:'user',content:JSON.stringify({question,page:page||undefined,context:{attention:att},sources})}];
  const isNew=!convId;convId=convId||uid();const userMsgId=uid(),answerId=uid();const title=question.slice(0,80);

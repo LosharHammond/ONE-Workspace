@@ -47,6 +47,8 @@ type MemberRow=Member&{mustChange?:number};
 const memberColumns='m.id,m.name,m.email,m.role,m.department,m.active,m.tenant_id AS tenantId,m.identity_id AS identityId,m.role_id AS roleId,m.manager_id AS managerId,m.title,m.phone,m.location,m.last_seen_at AS lastSeenAt';
 
 // Loads everything access decisions need for a member acting in a workspace.
+// Loads an active member with their full permissions (for background work acting as that person, e.g. agent runs).
+export async function memberById(tenantId:string,id:string):Promise<Member|null>{const m=await first<Member>(`SELECT ${memberColumns} FROM members m WHERE m.id=? AND m.tenant_id=? AND m.active=1`,id,tenantId);return m?withAccess(m):null}
 async function withAccess(u:Member){
  const t=await first<Tenant>('SELECT * FROM tenants WHERE id=?',u.tenantId);
  u.disabledPages=blockedPages(t?tenantSettings(t):{});
@@ -120,6 +122,8 @@ export function route(fn:(req:Request,u:Member)=>Promise<unknown>,opts:{module?:
  if(u.supportSessionId)await platformAuditStatement(u,req.method==='GET'?'support.view':'support.change',req).run();
  const out=await fn(req,u);
  (await import('./jobs')).maybeKick();
+ // Changes are projected into the Work Graph and handed to automations right after the response.
+ if(!['GET','HEAD'].includes(req.method))(await import('./events')).kickEvents();
  return out instanceof Response?out:json(out??{ok:true});
 }catch(e){return failure(e)}}}
 

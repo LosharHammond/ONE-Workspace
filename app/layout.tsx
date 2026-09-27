@@ -18,7 +18,7 @@ export const viewport: Viewport = {
 };
 
 // Applies the saved theme before first paint so dark-mode users never see a light flash.
-const themeScript = `try{var t=JSON.parse(localStorage.getItem('ows:theme')||'"system"');if(t==='dark'||t==='light')document.documentElement.dataset.theme=t}catch(e){}`;
+const themeScript = `try{var t=JSON.parse(localStorage.getItem('ows:theme')||'"system"');if(['dark','black','dim','light'].includes(t))document.documentElement.dataset.theme=t}catch(e){}`;
 
 export default function RootLayout({
   children,

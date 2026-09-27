@@ -1,6 +1,8 @@
 'use client';
 import {useState} from 'react';
 import {api,useApi,go,dateOnly,money,until} from './lib';
+import {ConnectedContext} from './context';
+import {CustomFields} from './studio-runtime';
 import {useApp,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,PersonSelect,Who,Timeline,ErrorNote,Skeleton,Empty,KV,Note,Stat,Attachments,Markdown,type Col} from './kit';
 
 type WO={id:string,number:string,plan_id:string|null,asset_id:string|null,title:string,status:string,priority:string,assignee_id:string|null,department:string,due_at:string|null,completed_at:string|null,parts_cost:number,labor_cost:number,asset_code:string|null,asset_name:string|null};
@@ -76,6 +78,7 @@ function OrderPanel({id,onClose,onChanged}:{id:string,onClose:()=>void,onChanged
    <h4 className="section-title">Photos & evidence</h4>
    <Attachments type="work_order" id={id} files={data.files} onChange={reload} canUpload={data.canWork}/>
    <h4 className="section-title">History</h4><Timeline events={data.history}/>
+   <CustomFields type="work_order" id={id}/><ConnectedContext type="work_order" id={id} compact/>
   </>}
   {complete&&w&&<CompleteDialog order={w} onClose={()=>setComplete(false)} onDone={()=>{setComplete(false);reload();onChanged()}}/>}
  </Inspector>;

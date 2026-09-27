@@ -1,7 +1,10 @@
 'use client';
 import {useMemo,useState} from 'react';
 import {api,useApi,go,ago,until,dateTime,cx} from './lib';
-import {useApp,Attachments,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Markdown,Thread,Timeline,Tabs,Segmented,ErrorNote,Skeleton,Empty,KV,type Col,LookupSelect} from './kit';
+import {ConnectedContext} from './context';
+import {CustomFields} from './studio-runtime';
+import {ConnectedApps} from './fabric';
+import {useApp,Attachments,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Markdown,Thread,Timeline,Tabs,Segmented,ErrorNote,Skeleton,Empty,KV,type Col,LookupSelect,SelectControl} from './kit';
 import {AiActions} from './assistant';
 import {ticketStatuses,ticketPriorities,ticketTypes} from '../data';
 
@@ -75,8 +78,8 @@ function TicketPanel({id,onClose,onChanged}:{id:string,onClose:()=>void,onChange
    {t.escalated_at&&<p className="small text-red">Escalated {ago(t.escalated_at)}</p>}
    <KV items={[['Requester',<Who key="r" id={t.requester_id} sub/>],['Affected user',t.affected_user_id&&<Who key="af" id={t.affected_user_id}/>],['Team',t.department],['Category',[t.category,t.subcategory].filter(Boolean).join(' / ')],['Impact / urgency',`${t.impact} / ${t.urgency}`],['Location',t.location],['Asset',data.asset&&<a key="a" href={`#/assets/all/${data.asset.id}`}>{data.asset.code} · {data.asset.name}</a>],['Due',t.due_at&&<span key="d" className={overdue(t)?'text-red':''}>{dateTime(t.due_at)} · {until(t.due_at)}</span>],['Resolved',t.resolved_at&&dateTime(t.resolved_at)]]}/>
    <div className="prose-box">{t.description?<Markdown text={t.description}/>:<p className="muted">No description provided.</p>}</div>
-   <Tabs value={tab} onChange={setTab} items={[{id:'conversation',label:'Conversation',count:data.comments.length},{id:'files',label:'Attachments',count:data.files.length},{id:'activity',label:'Activity'}]}/>
-   {tab==='files'?<Attachments type="ticket" id={id} files={data.files} onChange={reload}/>:tab==='conversation'?<Thread comments={data.comments} allowInternal={data.canWork} onPost={async(body,internal)=>{try{await api('/api/comments',{type:'ticket',id,body,internal});await reload()}catch(e){toast((e as Error).message,'error')}}}/>:<Timeline events={data.history}/>}
+   <Tabs value={tab} onChange={setTab} items={[{id:'conversation',label:'Conversation',count:data.comments.length},{id:'connected',label:'Connected'},{id:'files',label:'Attachments',count:data.files.length},{id:'activity',label:'Activity'}]}/>
+   {tab==='connected'?<><CustomFields type="ticket" id={id}/><ConnectedApps type="ticket" id={id}/><ConnectedContext type="ticket" id={id}/></>:tab==='files'?<Attachments type="ticket" id={id} files={data.files} onChange={reload}/>:tab==='conversation'?<Thread comments={data.comments} allowInternal={data.canWork} onPost={async(body,internal)=>{try{await api('/api/comments',{type:'ticket',id,body,internal});await reload()}catch(e){toast((e as Error).message,'error')}}}/>:<Timeline events={data.history}/>}
   </>}
   {approval&&t&&<Modal open onClose={()=>setApproval(false)} title={`Request approval · ${t.number}`}><ApprovalForm onSubmit={async(approverId,note)=>{await act({action:'request-approval',approverId,note},'Approval requested');setApproval(false)}}/></Modal>}
   {editing&&t&&<EditTicket t={t} onClose={()=>setEditing(false)} onSaved={async()=>{setEditing(false);await reload();onChanged()}}/>}
@@ -88,18 +91,23 @@ function TicketForm({init,onSubmit,busy,submitLabel}:{init:Partial<Ticket&{descr
  const [v,setV]=useState({impact:init.impact||'Medium',urgency:init.urgency||'Medium',subcategory:init.subcategory||'',affectedUserId:init.affected_user_id||null as string|null,title:init.title||'',type:init.type||'Incident',priority:init.priority||'Medium',department:init.department||s.departments.find(d=>/^it$/i.test(d.name))?.name||s.user.department,category:init.category||'',location:init.location??s.user.location??'',description:init.description||'',assetId:init.asset_id||''});
  const {data:assets}=useApi<{assets:{id:string,code:string,name:string,assigned_to:string|null}[]}>('/api/assets');
  const mine=(assets?.assets||[]).filter(a=>a.assigned_to===s.user.id);
- return <form className="form-grid" onSubmit={e=>{e.preventDefault();onSubmit(v)}}>
+ const assetOptions=[{value:'',label:'No related asset',icon:'CircleSlash'},...mine.map(a=>({value:a.id,label:`${a.code} · ${a.name}`,description:'Assigned to you',icon:'Laptop'})),...(assets?.assets||[]).filter(a=>a.assigned_to!==s.user.id).slice(0,500).map(a=>({value:a.id,label:`${a.code} · ${a.name}`,icon:'Boxes'}))];
+ const levels=['Low','Medium','High'].map(x=>({value:x,label:x,icon:x==='Low'?'Minus':x==='Medium'?'Circle': 'TriangleAlert'}));
+ return <form className="form-grid ticket-form" onSubmit={e=>{e.preventDefault();onSubmit(v)}}>
   <Field label="Summary" wide><input required autoFocus maxLength={200} value={v.title} placeholder="e.g. Printer on 2nd floor jams on every page" onChange={e=>setV({...v,title:e.target.value})}/></Field>
+  <div className="form-section-title"><span>Routing & classification</span><small>Choose where the request belongs so it reaches the right queue.</small></div>
   <Field label="Send to team"><DeptSelect value={v.department} required onChange={x=>setV({...v,department:x})}/></Field>
-  <Field label="Impact"><select value={v.impact} onChange={e=>setV({...v,impact:e.target.value,priority:derive(e.target.value,v.urgency)})}>{['Low','Medium','High'].map(x=><option key={x}>{x}</option>)}</select></Field>
-  <Field label="Urgency"><select value={v.urgency} onChange={e=>setV({...v,urgency:e.target.value,priority:derive(v.impact,e.target.value)})}>{['Low','Medium','High'].map(x=><option key={x}>{x}</option>)}</select></Field>
-  <Field label="Priority" hint="Suggested from impact × urgency; you can override it."><div className="prio-picker">{ticketPriorities.map(p=><button type="button" key={p} className={cx('prio-opt',`prio-${p.toLowerCase()}`,v.priority===p&&'on')} onClick={()=>setV({...v,priority:p})}>{p}</button>)}</div></Field>
-  <Field label="Type"><select value={v.type} onChange={e=>setV({...v,type:e.target.value})}>{ticketTypes.map(x=><option key={x}>{x}</option>)}</select></Field>
-  <Field label="Subcategory"><LookupSelect list="ticket-subcategories" label="Ticket subcategories" parent={v.category} value={v.subcategory} onChange={x=>setV({...v,subcategory:x})}/></Field>
-  <Field label="Affected user" hint="If different from you."><PersonSelect value={v.affectedUserId} onChange={x=>setV({...v,affectedUserId:x})}/></Field>
+  <Field label="Type"><SelectControl value={v.type} label="Ticket type" options={ticketTypes.map(x=>({value:x,label:x,icon:x==='Incident'?'CircleAlert':x==='Service request'?'ClipboardList':x==='Maintenance'?'Wrench':x==='Access request'?'KeyRound':'MessageSquare'}))} onChange={type=>setV({...v,type})}/></Field>
   <Field label="Category"><LookupSelect list="ticket-categories" label="Ticket categories" value={v.category} onChange={x=>setV({...v,category:x,subcategory:''})}/></Field>
+  <Field label="Subcategory" hint={v.category?'Narrow the request within the selected category.':'Choose a category first.'}><LookupSelect list="ticket-subcategories" label="Ticket subcategories" parent={v.category} value={v.subcategory} onChange={x=>setV({...v,subcategory:x})}/></Field>
+  <div className="form-section-title"><span>Service impact</span><small>Impact and urgency suggest a priority; you can still override it.</small></div>
+  <Field label="Impact"><SelectControl value={v.impact} label="Impact" options={levels} onChange={impact=>setV({...v,impact,priority:derive(impact,v.urgency)})}/></Field>
+  <Field label="Urgency"><SelectControl value={v.urgency} label="Urgency" options={levels} onChange={urgency=>setV({...v,urgency,priority:derive(v.impact,urgency)})}/></Field>
+  <Field label="Priority" wide hint="Suggested from impact × urgency; choose another level only when the context requires it."><div className="prio-picker">{ticketPriorities.map(p=><button type="button" key={p} className={cx('prio-opt',`prio-${p.toLowerCase()}`,v.priority===p&&'on')} onClick={()=>setV({...v,priority:p})}>{p}</button>)}</div></Field>
+  <div className="form-section-title"><span>People, place & context</span><small>Add enough detail for the receiving team to act without another round-trip.</small></div>
+  <Field label="Affected user" hint="Leave blank when the request is for you."><PersonSelect value={v.affectedUserId} onChange={x=>setV({...v,affectedUserId:x})}/></Field>
   <Field label="Location"><LocationInput value={v.location} onChange={x=>setV({...v,location:x})}/></Field>
-  <Field label="Related asset" hint={mine.length?'Assets assigned to you are listed first.':undefined}><select value={v.assetId} onChange={e=>setV({...v,assetId:e.target.value})}><option value="">None</option>{mine.map(a=><option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}{(assets?.assets||[]).filter(a=>a.assigned_to!==s.user.id).slice(0,500).map(a=><option key={a.id} value={a.id}>{a.code} · {a.name}</option>)}</select></Field>
+  <Field label="Related asset" wide hint={mine.length?'Assets assigned to you are prioritised in the search.':undefined}><SelectControl value={v.assetId} label="Related asset" searchable options={assetOptions} onChange={assetId=>setV({...v,assetId})}/></Field>
   <Field label="Details" wide hint="Markdown supported: **bold**, lists, links."><textarea rows={6} maxLength={8000} value={v.description} placeholder="What happened, since when, what have you tried?" onChange={e=>setV({...v,description:e.target.value})}/></Field>
   <div className="form-actions"><Btn type="submit" variant="primary" busy={busy}>{submitLabel}</Btn></div>
  </form>;

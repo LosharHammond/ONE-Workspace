@@ -1,4 +1,5 @@
 'use client';
+import {ControlTower} from './agents';
 import {Fragment,useEffect,useMemo,useState} from 'react';
 import {api,useApi,go,dateOnly,cx,PREVIEW_KEY} from './lib';
 import {TagPicker,useApp,Btn,Chip,Header,Grid,Modal,Field,DeptSelect,PersonSelect,Who,ErrorNote,Skeleton,Empty,Card,Icon,Note,Stat,Tabs,type Col} from './kit';
@@ -18,7 +19,7 @@ export default function Admin({parts}:{parts:string[]}){
  if(view==='activity'&&can('audit'))return <Activity/>;
  if(view==='security'&&admin)return <Activity security/>;
  if(view==='connectors'&&(admin||can('connectors')))return <ConnectorCenter scope="company" parts={parts.slice(1)}/>;
- if(view==='ai'&&admin)return <AiSettings/>;
+ if(view==='ai'&&admin)return <ControlTower parts={parts.slice(1)} providers={<AiSettings/>}/>;
  if(view==='lists'&&(admin||can('settings','configure')))return <Lists listId={parts[1]}/>;
  if(view==='groups'&&(admin||can('settings','configure')))return <Groups openId={parts[1]}/>;
  if(admin)return <Company/>;

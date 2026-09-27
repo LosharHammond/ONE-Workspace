@@ -2,6 +2,8 @@
 import {useEffect,useMemo,useState} from 'react';
 import {api,useApi,go,money,dateOnly,dateTime,ago,cx} from './lib';
 import {KV,useApp,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Thread,Timeline,Tabs,Segmented,ErrorNote,Skeleton,Empty,Card,Icon,Note,Avatar,Stat,type Col,LookupSelect} from './kit';
+import {ConnectedContext} from './context';
+import {CustomFields} from './studio-runtime';
 import {AiActions} from './assistant';
 
 type Doc={id:string,kind:'PR'|'PO',number:string,title:string,justification:string,department:string,location:string,requester_id:string,vendor_id:string|null,pr_id:string|null,needed_by:string|null,currency:string,subtotal:number,tax:number,total:number,status:string,terms:string,created_by:string,created_at:string,updated_at:string,submitted_at:string|null,version:number,pending_step?:string|null,awaitingMe?:boolean,involved?:boolean};
@@ -114,7 +116,7 @@ function DocView({kind,id}:{kind:'PR'|'PO',id:string}){
     {(data.quotations.length>0||data.canQuote)&&<Card title="Quotations" actions={data.canQuote&&<Btn size="sm" icon="Plus" onClick={()=>setDialog('quote')}>Add</Btn>}>{!data.quotations.length?<p className="muted small">Collect vendor quotes and mark the chosen one; converting to a purchase order uses its vendor.</p>:<div className="mini-list">{data.quotations.map((q:any)=><div key={q.id} className="mini-row"><span>{q.vendor_name}<small>{q.valid_until?`valid to ${dateOnly(q.valid_until)}`:''}{q.notes?` · ${q.notes}`:''}</small></span><b>{money(q.amount,q.currency)}</b>{q.selected?<Chip tone="green">Selected</Chip>:data.canQuote&&<Btn size="sm" variant="ghost" onClick={()=>act('quote-select',{quoteId:q.id},'Quotation selected')}>Select</Btn>}</div>)}</div>}</Card>}
     {data.budget&&<Card title="Budget"><KV items={[['Budget',data.budget.name],['Amount',money(data.budget.amount,data.budget.currency)],['Spent',money(data.budget.spent,data.budget.currency)],['Committed',money(data.budget.committed,data.budget.currency)],['Remaining',<b key="r" className={data.budget.remaining<0?'text-red':''}>{money(data.budget.remaining,data.budget.currency)}</b>]]}/></Card>}
     {data.related.length>0&&<Card title="Linked documents"><div className="mini-list">{data.related.map((r:any)=><a key={r.id} href={`#/purchasing/${r.kind.toLowerCase()}/${r.id}`}><span className={`kind-badge k-${r.kind}`}>{r.kind}</span><span>{r.number}</span><Chip>{r.status}</Chip></a>)}</div></Card>}
-    <Card pad={false}><div className="card-tabs"><Tabs value={tab} onChange={setTab} items={[{id:'comments',label:'Comments',count:data.comments.length},{id:'activity',label:'Activity'}]}/></div><div className="card-pad">{tab==='comments'?<Thread comments={data.comments} onPost={async body=>{await api('/api/comments',{type:kind,id,body});await reload()}}/>:<Timeline events={data.history}/>}</div></Card>
+    <Card pad={false}><div className="card-tabs"><Tabs value={tab} onChange={setTab} items={[{id:'comments',label:'Comments',count:data.comments.length},{id:'connected',label:'Connected'},{id:'activity',label:'Activity'}]}/></div><div className="card-pad">{tab==='connected'?<><CustomFields type={kind} id={id}/><ConnectedContext type={kind} id={id} compact/></>:tab==='comments'?<Thread comments={data.comments} onPost={async body=>{await api('/api/comments',{type:kind,id,body});await reload()}}/>:<Timeline events={data.history}/>}</div></Card>
    </aside>
   </div>
   {dialog==='convert'&&<ConvertDialog doc={d} onClose={()=>setDialog('')}/>}

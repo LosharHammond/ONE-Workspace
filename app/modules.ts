@@ -21,6 +21,10 @@ export const modules:ModuleDef[]=[
  {id:'projects',label:'Projects',description:'Project planning, finance and delivery.',pages:['projects']},
  {id:'tasks',label:'Tasks',description:'Task planner.',pages:['tasks']},
  {id:'messages',label:'Messages',description:'Company messaging.',pages:['messages']},
+ {id:'business',label:'Goals & customers',description:'Strategy, customers, contracts, services, meetings and decisions.',pages:['business']},
+ {id:'graph',label:'Work Graph',description:'Relationships across every module.',pages:['graph']},
+ {id:'studio',label:'Workspace Studio',description:'No-code apps, workflows and automations.',pages:['studio']},
+ {id:'agents',label:'AI workforce',description:'Governed AI agents and the Control Tower.',pages:['agents']},
 ];
 export const moduleIds=modules.map(m=>m.id);
 // Modules that existed before page entitlements. Workspaces created then store only settings.modules;

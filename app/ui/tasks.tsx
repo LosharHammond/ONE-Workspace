@@ -2,6 +2,8 @@
 import {useMemo,useState} from 'react';
 import {api,useApi,go,ago,dateOnly,cx,downloadCsv,parseCsv,pref,setPref} from './lib';
 import {useApp,Btn,Chip,Header,Field,Who,Avatar,Thread,ErrorNote,Skeleton,Empty,Icon,Segmented,Menu,Inspector,Tabs,Modal,Note,PersonSelect,Card} from './kit';
+import {ConnectedContext} from './context';
+import {CustomFields} from './studio-runtime';
 import {AiActions} from './assistant';
 
 // Unified tasks: personal, department, project, space, ticket and purchasing tasks in one place.
@@ -127,7 +129,8 @@ export function TaskPanel({id,onClose,onChange}:{id:string,onClose:()=>void,onCh
   {!data||!t?<Skeleton/>:<>
    {t.approval_status==='pending'&&<Note tone="warn">Waiting for approval from {s.people.find(p=>p.id===t.approver_id)?.name||'the approver'}.{t.approver_id===s.user.id&&<> <Btn size="sm" variant="primary" onClick={()=>act({action:'decide',approve:true},'Approved')}>Approve</Btn> <Btn size="sm" onClick={()=>act({action:'decide',approve:false},'Rejected')}>Reject</Btn></>}</Note>}
    <div className="row-gap">{data.canEdit&&<select value={t.status} onChange={e=>act({action:'status',status:e.target.value})} aria-label="Status">{STATUSES.map(x=><option key={x}>{x}</option>)}</select>}<AiActions entity="task" entityId={t.id}/></div>
-   <Tabs value={tab} onChange={setTab} items={[{id:'details',label:'Details'},{id:'checklist',label:'Checklist',count:data.checklist.length},{id:'deps',label:'Dependencies',count:data.deps.length},{id:'time',label:'Time'},{id:'discussion',label:'Discussion',count:data.comments.length},{id:'activity',label:'Activity'}]}/>
+   <Tabs value={tab} onChange={setTab} items={[{id:'details',label:'Details'},{id:'checklist',label:'Checklist',count:data.checklist.length},{id:'deps',label:'Dependencies',count:data.deps.length},{id:'time',label:'Time'},{id:'discussion',label:'Discussion',count:data.comments.length},{id:'connected',label:'Connected'},{id:'activity',label:'Activity'}]}/>
+   {tab==='connected'&&<><CustomFields type="task" id={t.id}/><ConnectedContext type="task" id={t.id} compact/></>}
    {tab==='details'&&<div className="stack">
     {t.description?<p className="prewrap">{t.description}</p>:<p className="muted">No description.</p>}
     <dl className="kv">

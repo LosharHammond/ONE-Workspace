@@ -2,6 +2,7 @@
 import {useCallback,useEffect,useMemo,useRef,useState} from 'react';
 import {api,useApi,go,ago,bytes,dateTime,cx,pref,setPref,downloadCsv} from './lib';
 import {useApp,Btn,Chip,Header,Inspector,Modal,Field,ErrorNote,Skeleton,Empty,KV,Icon,Note,Menu,Tabs,Markdown,AudiencePicker,TagPicker} from './kit';
+import {ConnectedContext} from './context';
 import {AiActions} from './assistant';
 
 // Files: folders, audiences, versions, recycle bin, processing results (text, transcripts, captions, summaries),
@@ -145,12 +146,13 @@ function FilePanel({id,onClose,onChanged}:{id:string,onClose:()=>void,onChanged:
  </>}>
   {f.pendingAcl&&<Note tone="warn">Company-wide sharing was requested and is waiting for an administrator.{data.isAdmin&&<span className="row-gap"><Btn size="sm" variant="primary" onClick={()=>act({action:'approve-access'},'Approved')}>Approve</Btn><Btn size="sm" onClick={()=>act({action:'reject-access'},'Declined')}>Decline</Btn></span>}</Note>}
   {f.processing_status==='failed'&&<Note tone="warn">{f.processing_error||'Processing failed.'}</Note>}
-  <Tabs value={tab} onChange={setTab} items={[{id:'preview',label:'Preview'},{id:'processing',label:'Summary & text'},{id:'details',label:'Details'},{id:'access',label:'Access'},{id:'versions',label:`Versions (${data.versions.length+1})`},{id:'links',label:'Links'},...(data.canEdit?[{id:'activity',label:'Activity'}]:[])]}/>
+  <Tabs value={tab} onChange={setTab} items={[{id:'preview',label:'Preview'},{id:'processing',label:'Summary & text'},{id:'details',label:'Details'},{id:'access',label:'Access'},{id:'versions',label:`Versions (${data.versions.length+1})`},{id:'links',label:'Links'},{id:'connected',label:'Connected'},...(data.canEdit?[{id:'activity',label:'Activity'}]:[])]}/>
   {tab==='preview'&&(deleted?<Note>Restore the file to preview it.</Note>:f.mime.startsWith('image/')?<img className="file-preview-img" src={pre} alt={f.name}/>:f.mime.startsWith('video/')?<video className="file-preview-media" controls src={pre}><track kind="captions" src={`/api/files?artifact=${f.id}&kind=vtt&download`} default/></video>:f.mime.startsWith('audio/')?<audio className="file-preview-media" controls src={pre}/>:f.mime==='application/pdf'?<iframe title={f.name} className="file-preview-pdf" src={pre} sandbox=""/>:<Empty icon={fileIcon(f.mime)} title="No preview for this type">Open the Summary & text tab, or download the file.</Empty>)}
   {tab==='processing'&&<Processing f={f} artifacts={data.artifacts} job={data.job} canEdit={data.canEdit} canDownload={data.canDownload}/>}
   {tab==='details'&&<DetailsForm f={f} canEdit={data.canEdit} onSave={v=>act({action:'update',...v},'Saved')}/>}
   {tab==='access'&&<AccessTab f={f} canEdit={data.canEdit} isAdmin={data.isAdmin} act={act}/>}
   {tab==='versions'&&<table className="plain"><thead><tr><th>Version</th><th>Size</th><th>By</th><th>When</th><th/></tr></thead><tbody><tr><td>v{f.version} <Chip tone="green">current</Chip></td><td>{bytes(f.bytes)}</td><td>{person(f.uploaded_by)?.name}</td><td className="muted">{dateTime(f.updated_at)}</td><td/></tr>{data.versions.map(v=><tr key={v.version}><td>v{v.version}</td><td>{bytes(v.bytes)}</td><td>{person(v.uploadedBy)?.name}</td><td className="muted">{dateTime(v.createdAt)}</td><td className="row-gap">{data.canDownload&&<a className="btn btn-sm" href={`/api/files?download=${f.id}&v=${v.version}`}>Download</a>}{data.canEdit&&<Btn size="sm" onClick={async()=>{if(await ask({title:`Restore version ${v.version}?`,body:'It becomes the newest version; nothing is lost.',confirm:'Restore'})!==false)act({action:'restore-version',version:v.version},`Version ${v.version} restored`)}}>Restore</Btn>}</td></tr>)}</tbody></table>}
+  {tab==='connected'&&<ConnectedContext type="file" id={f.id} compact/>}
   {tab==='links'&&<LinksTab f={f} links={data.links} canEdit={data.canEdit} act={act}/>}
   {tab==='activity'&&<><h4>Who viewed, downloaded or changed it</h4><table className="plain"><thead><tr><th>When</th><th>Who</th><th>Action</th><th>IP</th></tr></thead><tbody>{data.events.map((e,i)=><tr key={i}><td className="muted">{dateTime(e.createdAt)}</td><td>{e.who}</td><td>{e.action}</td><td className="mono small">{e.ip}</td></tr>)}</tbody></table><h4>Change history</h4><div className="mini-list">{data.history.map((h,i)=><div key={i} className="mini-row"><Icon name="History" size={14}/><span>{h.action}<small>{h.who} · {dateTime(h.createdAt)}</small></span></div>)}</div></>}
  </Inspector>;

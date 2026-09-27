@@ -24,7 +24,7 @@ for(let i=0;i<120;i++){try{const r=await fetch(base+'/api/session');if(r.ok)brea
 const env={...process.env,OWS_BASE:base,OWS_SETUP:token,OWS_STATE:STATE,OWS_MOCK:`http://127.0.0.1:${MOCK}`,OWS_OWNER_PW:`Owner-${randomBytes(12).toString('hex')}!`,OWS_SECRETS:[token,secretsKey,groqKey].join(','),OWS_LOG:LOG};
 // Suites share one database and build on each other (the owner is set up first), so they run one after another.
 // OWS_SUITES=platform,collab runs a subset (the platform suite must stay first: it sets up the owner).
-const suites=['platform','saas','collab'].filter(n=>!process.env.OWS_SUITES||process.env.OWS_SUITES.split(',').includes(n)).map(n=>`tests/${n}.test.mjs`);
+const suites=['platform','saas','collab','os'].filter(n=>!process.env.OWS_SUITES||process.env.OWS_SUITES.split(',').includes(n)).map(n=>`tests/${n}.test.mjs`);
 let failed=0;
 for(const file of suites){
  const code=await new Promise(done=>spawn(process.execPath,['--test','--test-reporter=spec',file],{stdio:'inherit',env}).on('exit',c=>done(c??1)));

@@ -3,6 +3,7 @@ import {all,HttpError} from './core';
 import {canSeeAsset,canSeeTicket,canSeeDoc,canSeeFile,canSeePage,type AssetRow,type TicketRow,type PurchaseRow,type FileRow,type PageRow} from './entities';
 import {widgetTypes,widgetByType,dataSources,parseFilters,validateLayout as validate,LayoutError,type Widget,type Layout} from '../widgets';
 import {connectorRead} from './connectors';
+import {canSeeProject,canSeeTask,taskContext,TASK_SELECT,type ProjectRow,type TaskRow} from './collab';
 import type {Member} from './policy';
 
 // Resolves builder widgets on the server. The workspace is always the viewer's (u.tenantId) and every row
@@ -12,7 +13,7 @@ export function validateLayout(input:unknown,lenient=false):Layout{try{return va
 export function widgetCatalogForAi(){return {widgets:widgetTypes.map(w=>({type:w.type,label:w.label,description:w.description,config:Object.fromEntries(w.fields.map(f=>[f.key,f.options?f.options.join('|'):f.type]))})),sources:dataSources.map(s=>({id:s.id,label:s.label,fields:s.fields,filters:Object.fromEntries(Object.entries(s.filters).map(([k,v])=>[k,Array.isArray(v)?v.join('|'):'text'])),groupBy:s.groupBy}))}}
 // Who may see a widget (roles, departments, locations); editors always see everything.
 export function widgetVisible(u:Member,w:Widget){const v=w.visibility;if(!v||u.role==='admin')return true;if(v.roles?.length&&!v.roles.includes(u.roleId||'')&&!v.roles.includes(u.role))return false;if(v.departments?.length&&!v.departments.some(d=>departmentKey(d)===departmentKey(u.department)))return false;if(v.locations?.length&&!v.locations.some(l=>(u.location||'').toLowerCase().startsWith(l.toLowerCase())))return false;return true}
-export function filterLayout(u:Member,l:Layout):Layout{const rows=(rs:Layout['sections'][number]['rows'])=>(rs||[]).map(r=>({...r,columns:r.columns.map(c=>({...c,widgets:c.widgets.filter(w=>widgetVisible(u,w))}))}));return {sections:l.sections.map(s=>s.kind==='tabs'?{...s,tabs:(s.tabs||[]).map(t=>({...t,rows:rows(t.rows)}))}:{...s,rows:rows(s.rows)})}}
+export function filterLayout(u:Member,l:Layout):Layout{const rows=(rs:Layout['sections'][number]['rows'])=>(rs||[]).map(r=>({...r,columns:r.columns.map(c=>({...c,widgets:c.widgets.filter(w=>widgetVisible(u,w))}))}));return {sections:l.sections.map(s=>s.kind==='tabs'||s.kind==='accordion'?{...s,tabs:(s.tabs||[]).map(t=>({...t,rows:rows(t.rows)}))}:{...s,rows:rows(s.rows)})}}
 
 type Out={id:string,link:string,[k:string]:unknown};
 const day=(s:string|null|undefined)=>s?s.slice(0,10):'';
@@ -33,6 +34,12 @@ async function load(u:Member,source:string,f:Record<string,string>):Promise<Out[
   case 'work_orders':return (await all<{id:string,number:string,title:string,status:string,priority:string,assignee_id:string|null,department:string,created_by:string,due_at:string|null,created_at:string}>('SELECT id,number,title,status,priority,assignee_id,department,created_by,due_at,created_at FROM work_orders WHERE tenant_id=? ORDER BY created_at DESC LIMIT 500',u.tenantId)).filter(o=>(o.assignee_id===u.id||canActOn(u,'schedules','view',o.department||u.department,o.created_by))&&eq(o.status,f.status)&&eq(o.priority,f.priority)&&(f.mine!=='assigned'||o.assignee_id===u.id)).map(o=>({id:o.id,link:`#/maintenance/orders/${o.id}`,number:o.number,title:o.title,status:o.status,priority:o.priority,assignee:o.assignee_id?n.get(o.assignee_id)||'':'',due:day(o.due_at),created:o.created_at}));
   case 'inventory':return (await all<{id:string,sku:string,name:string,category:string,unit:string,min:number,qty:number}>('SELECT i.id,i.sku,i.name,i.category,i.unit,i.min_stock AS min,(SELECT coalesce(sum(s.qty),0) FROM stock_levels s WHERE s.item_id=i.id AND s.tenant_id=i.tenant_id) AS qty FROM inventory_items i WHERE i.tenant_id=? ORDER BY i.name LIMIT 1000',u.tenantId)).filter(i=>eq(i.category,f.category)&&(f.low!=='yes'||i.qty<=i.min)).map(i=>({...i,link:`#/inventory/items/${i.id}`}));
   case 'files':return (await all<FileRow>('SELECT * FROM files WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 500',u.tenantId)).filter(x=>canSeeFile(u,x)&&eq(x.department,f.department)).map(x=>({id:x.id,link:`#/files/${x.folder_id||'root'}/${x.id}`,name:x.name,department:x.department||'Company',updated:day(x.updated_at),size:x.bytes}));
+  case 'projects':return (await all<ProjectRow>('SELECT * FROM projects WHERE tenant_id=? ORDER BY updated_at DESC LIMIT 500',u.tenantId)).filter(p=>canSeeProject(u,p)&&eq(p.health,f.health)&&eq(p.department,f.department)&&(f.mine!=='managed'||p.manager_id===u.id)).map(p=>({id:p.id,link:`#/projects/${p.id}`,code:p.code,name:p.name,title:`${p.code} · ${p.name}`,stage:p.stage,health:p.health,progress:p.progress,department:p.department,start:day(p.start_date),target:day(p.target_date),manager:p.manager_id?n.get(p.manager_id)||'':''}));
+  case 'tasks':{
+   const rows=await all<TaskRow>(`SELECT ${TASK_SELECT} FROM tasks t WHERE t.tenant_id=? AND t.deleted_at IS NULL ORDER BY t.due_date IS NULL,t.due_date LIMIT 1000`,u.tenantId);const ctx=await taskContext(u,rows);
+   const proj=f.project?(await all<{id:string,code:string}>('SELECT id,code FROM projects WHERE tenant_id=?',u.tenantId)).find(p=>p.code.toLowerCase()===f.project.toLowerCase()||p.id===f.project)?.id||'-':'';
+   return rows.filter(t=>canSeeTask(u,t,ctx.projects,ctx.spaces)&&eq(t.status,f.status)&&eq(t.priority,f.priority)&&(!proj||t.project_id===proj)&&(f.mine!=='assigned'||t.owner_id===u.id||(t.assignees||'').split(',').includes(u.id))).map(t=>({id:t.id,link:`#/tasks/all/${t.id}`,number:t.number,title:t.title,status:t.status,priority:t.priority,start:day(t.start_date),due:day(t.due_date),progress:t.progress,assignee:(t.assignees||'').split(',').filter(Boolean).map(x=>n.get(x)||'').join(', '),project:t.project_id?ctx.projects.get(t.project_id)?.code||'':''}));
+  }
   case 'announcements':return (await all<PageRow>("SELECT * FROM pages WHERE tenant_id=? AND status='Published' ORDER BY updated_at DESC LIMIT 300",u.tenantId)).filter(p=>canSeePage(u,p)&&eq(p.department,f.department)&&(!f.kind||p.kind===f.kind)).map(p=>({id:p.id,link:`#/spaces/page/${p.id}`,title:p.title,department:p.department||'Company',updated:day(p.updated_at)}));
  }
  throw new HttpError(400,'Unknown data source.');
@@ -49,16 +56,38 @@ export async function widgetData(u:Member,raw:unknown){
  const w=layout.sections[0].rows![0].columns[0].widgets[0];
  const def=widgetByType.get(w.type)!;
  if(def.page&&!hasAction(u,def.page))throw new HttpError(403,`${def.label} widgets are not available to you.`);
+ if(['text','richtext','heading','image','video','audio','divider','alert','button','links','embed','html'].includes(w.type))return {};
+ if(w.type==='graph'){const {connectedContext}=await import('./graph-context');return {context:await connectedContext(u,String(w.config.recordType),String(w.config.recordId))}}
+ if(w.type==='comments'){const {visibleEntity}=await import('./entities');const type=String(w.config.entityType),id=String(w.config.entityId);await visibleEntity(u,type as 'task',id);return {comments:await all('SELECT c.id,c.body,c.created_at AS createdAt,m.name AS author FROM comments c LEFT JOIN members m ON m.id=c.author_id AND m.tenant_id=c.tenant_id WHERE c.tenant_id=? AND c.entity_type=? AND c.entity_id=? AND c.internal=0 ORDER BY c.created_at DESC LIMIT 20',u.tenantId,type,id)}}
+ if(w.type==='studio-table'||w.type==='studio-report'||w.type==='studio-form'){
+  const st=await import('./studio');const rt=await st.runtime(u,String(w.config.app),false);
+  if(w.type==='studio-form'){const form=rt.def.forms.find(x=>x.key===w.config.form);if(!form)throw new HttpError(404,'Form not found in the published app.');return {app:{id:rt.app.id,slug:rt.app.slug,name:rt.app.name},form,table:st.tableOf(rt.def,form.table)}}
+  if(w.type==='studio-report'){const r=rt.def.reports.find(x=>x.key===w.config.report);if(!r)throw new HttpError(404,'Report not found in the published app.');return {app:{id:rt.app.id,slug:rt.app.slug,name:rt.app.name},report:r,result:await st.runReport(u,rt.app,rt.def,r)}}
+  const t=st.tableOf(rt.def,String(w.config.table));const list=await st.listRecords(u,rt.app,rt.def,t,{size:Number(w.config.limit||10)});return {app:{id:rt.app.id,slug:rt.app.slug,name:rt.app.name},table:t,...list};
+ }
+ if(w.type==='agent'){const {first}=await import('./core');const a=await first<{id:string,name:string,description:string,status:string}>("SELECT id,name,description,status FROM ai_agents WHERE id=? AND tenant_id=?",String(w.config.agentId),u.tenantId);if(!a||a.status!=='published')throw new HttpError(404,'Agent not available.');return {agent:a,prompt:w.config.prompt||''}}
+ if(w.type==='inbox'){return {}}
  if(w.type==='connector')return {rows:await connectorRead(u,String(w.config.connector),String(w.config.path||''),Number(w.config.limit||20))};
  const sourceId=String(w.config.source||def.source||'');if(!sourceId)return {};
  const src=dataSources.find(s=>s.id===sourceId)!;
  let filters:Record<string,string>={};try{filters=parseFilters(String(w.config.filters||''),src)}catch(e){throw new HttpError(400,(e as Error).message)}
  let rows=await load(u,sourceId,filters);
  if(w.type==='kpi')return {count:rows.length,label:src.label};
+ if(w.type==='statistic'){const target=Number(w.config.target||0);return {count:rows.length,label:String(w.config.label||src.label),target:target||null,pct:target?Math.round(rows.length/target*100):null}}
+ if(w.type==='timeline'){const field=src.dateField;if(!field)throw new HttpError(400,`${src.label} have no dates for a timeline.`);const end=new Date(Date.now()+Number(w.config.days||60)*86400000).toISOString().slice(0,10);const today=new Date().toISOString().slice(0,10);const ev=rows.filter(r=>r[field]&&String(r[field])<=end).sort((a,b)=>String(a[field]).localeCompare(String(b[field]))).slice(0,60);return {events:ev.map(r=>({id:r.id,link:r.link,date:r[field],title:r.title||r.name,status:r.status||r.stage||'',overdue:String(r[field])<today}))}}
+ if(w.type==='gantt'){const limit=Number(w.config.limit||40);const bars=rows.filter(r=>r.due||r.start).slice(0,limit).map(r=>({id:r.id,link:r.link,title:r.title,status:r.status,progress:Number(r.progress||0),start:String(r.start||r.due),end:String(r.due||r.start)}));const min=bars.reduce((m,b)=>b.start<m?b.start:m,'9999'),max=bars.reduce((m,b)=>b.end>m?b.end:m,'0000');return {bars,from:bars.length?min:null,to:bars.length?max:null}}
  if(w.type==='chart'||w.type==='kanban'){const key=w.type==='kanban'?'status':String(w.config.groupBy||src.groupBy[0]||'status');const groups=new Map<string,Out[]>();for(const r of rows){const g=String(r[key]??'')||'—';groups.set(g,[...(groups.get(g)||[]),r])}const limit=Number(w.config.limit||60);return {groups:[...groups.entries()].map(([name,items])=>({name,count:items.length,items:w.type==='kanban'?items.slice(0,limit):[]})).sort((a,b)=>b.count-a.count)}}
  if(w.type==='calendar'){const field=src.dateField;if(!field)throw new HttpError(400,`${src.label} have no dates for a calendar.`);const today=new Date().toISOString().slice(0,10),end=new Date(Date.now()+Number(w.config.days||30)*86400000).toISOString().slice(0,10);rows=rows.filter(r=>{const d=String(r[field]||'');return d&&d<=end&&d>=new Date(Date.now()-7*86400000).toISOString().slice(0,10)}).sort((a,b)=>String(a[field]).localeCompare(String(b[field])));return {events:rows.slice(0,100).map(r=>({id:r.id,link:r.link,date:r[field],title:r.title||r.name,overdue:String(r[field])<today}))}}
  const sort=String(w.config.sort||'');if(sorters[sort])rows=[...rows].sort(sorters[sort]);
  const limit=Number(w.config.limit||10);
  const columns=String(w.config.columns||'').split(',').map(c=>c.trim()).filter(c=>src.fields.includes(c));
  return {rows:rows.slice(0,limit),total:rows.length,columns:columns.length?columns:src.fields.slice(0,5)};
+}
+// Module data sources, shared with Studio reports (same permission checks as widgets).
+export const loadSource=load;
+// Platform widget policy: widget types the Platform Owner has not approved (or has disabled) cannot be saved.
+export async function assertWidgetsAllowed(layout:Layout){
+ const {platformSetting}=await import('./platform-settings');const p=await platformSetting<{disabled?:string[]}>('widgetPolicy',{});if(!p.disabled?.length)return;
+ const used=layout.sections.flatMap(s=>[...(s.rows||[]),...(s.tabs||[]).flatMap(t=>t.rows)]).flatMap(r=>r.columns.flatMap(c=>c.widgets)).map(w=>w.type);
+ const bad=[...new Set(used.filter(t=>p.disabled!.includes(t)))];if(bad.length)throw new HttpError(400,`These widget types are disabled by the platform: ${bad.join(', ')}.`);
 }

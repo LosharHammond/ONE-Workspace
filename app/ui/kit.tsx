@@ -1,5 +1,5 @@
 'use client';
-import {createContext,useContext,useEffect,useMemo,useRef,useState,type ReactNode,type ComponentType} from 'react';
+import {createContext,useContext,useEffect,useId,useMemo,useRef,useState,type ReactNode,type ComponentType} from 'react';
 import {icons as iconSet} from './icons';
 import {cx,initials,hue,downloadCsv,pref,setPref,api} from './lib';
 import qrcode from 'qrcode-generator';
@@ -61,6 +61,23 @@ export function Menu({trigger,items,align='right'}:{trigger:(open:()=>void)=>Rea
 }
 
 // ── Pickers ─────────────────────────────────────────────────────────────────
+export type SelectOption={value:string,label:ReactNode,searchText?:string,description?:string,icon?:string,disabled?:boolean};
+export function SelectControl({value,onChange,options,placeholder='Choose…',disabled,required,label,searchable}:{value:string,onChange:(value:string)=>void|Promise<void>,options:SelectOption[],placeholder?:string,disabled?:boolean,required?:boolean,label?:string,searchable?:boolean}){
+ const [open,setOpen]=useState(false),[q,setQ]=useState('');const ref=useRef<HTMLDivElement>(null),listId=useId();
+ useEffect(()=>{if(!open)return;const close=(e:MouseEvent)=>{if(!ref.current?.contains(e.target as Node)){setOpen(false);setQ('')}};document.addEventListener('mousedown',close);return()=>document.removeEventListener('mousedown',close)},[open]);
+ const current=options.find(o=>o.value===value);const filter=q.trim().toLowerCase();
+ const visible=options.filter(o=>!filter||String(o.searchText??(typeof o.label==='string'?o.label:o.value)).toLowerCase().includes(filter));
+ const pick=async(o:SelectOption)=>{if(o.disabled)return;await onChange(o.value);setOpen(false);setQ('')};
+ return <div className={cx('select-control-wrap',open&&'open',disabled&&'disabled')} ref={ref}>
+  <button type="button" role="combobox" className={cx('select-control',!current&&'placeholder')} disabled={disabled} aria-haspopup="listbox" aria-expanded={open} aria-controls={listId} aria-label={label} aria-required={required} onClick={()=>setOpen(x=>!x)} onKeyDown={e=>{if(['ArrowDown','Enter',' '].includes(e.key)){e.preventDefault();setOpen(true)}if(e.key==='Escape'){setOpen(false);setQ('')}}}>
+   {current?.icon&&<Icon name={current.icon} size={16}/>}<span>{current?.label??placeholder}</span><Icon name="ChevronsUpDown" size={15}/>
+  </button>
+  {open&&<div className="select-popover" id={listId} role="listbox" aria-label={label}>
+   {(searchable||options.length>8)&&<div className="select-search"><Icon name="Search" size={14}/><input autoFocus value={q} placeholder="Search options…" onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==='Escape'){e.stopPropagation();setOpen(false);setQ('')}}}/></div>}
+   <div className="select-options">{visible.map(o=><button type="button" role="option" aria-selected={o.value===value} key={o.value||'__empty'} disabled={o.disabled} className={cx(o.value===value&&'selected')} onClick={()=>pick(o)}>{o.icon&&<Icon name={o.icon} size={15}/>}<span>{o.label}{o.description&&<small>{o.description}</small>}</span>{o.value===value&&<Icon name="Check" size={15}/>}</button>)}{!visible.length&&<div className="select-empty">No matching options</div>}</div>
+  </div>}
+ </div>;
+}
 export function PersonSelect({value,onChange,placeholder='Search people…',filter,allowClear=true}:{value?:string|null,onChange:(id:string|null)=>void,placeholder?:string,filter?:(p:Person)=>boolean,allowClear?:boolean}){
  const {s,person}=useApp();const [q,setQ]=useState(''),[open,setOpen]=useState(false);const ref=useRef<HTMLDivElement>(null);
  useEffect(()=>{if(!open)return;const f=(e:MouseEvent)=>{if(!ref.current?.contains(e.target as Node))setOpen(false)};document.addEventListener('mousedown',f);return()=>document.removeEventListener('mousedown',f)},[open]);
@@ -68,38 +85,34 @@ export function PersonSelect({value,onChange,placeholder='Search people…',filt
  const cur=person(value);
  return <div className="combo" ref={ref}>{cur&&!open?<button type="button" className="combo-value" onClick={()=>setOpen(true)}><Avatar name={cur.name} size={20}/><span>{cur.name}</span><small>{cur.department}</small>{allowClear&&<span className="combo-clear" role="button" aria-label="Clear" onClick={e=>{e.stopPropagation();onChange(null)}}><Icon name="X" size={14}/></span>}</button>:<input value={q} placeholder={placeholder} onFocus={()=>setOpen(true)} onChange={e=>{setQ(e.target.value);setOpen(true)}} autoFocus={open&&!!cur}/>}{open&&<div className="combo-list">{list.map(p=><button type="button" key={p.id} onClick={()=>{onChange(p.id);setOpen(false);setQ('')}}><Avatar name={p.name} size={22}/><span>{p.name}<small>{[p.title,p.department].filter(Boolean).join(' · ')}</small></span></button>)}{!list.length&&<div className="combo-empty">No matches</div>}</div>}</div>;
 }
-export function DeptSelect({value,onChange,any,required}:{value:string,onChange:(v:string)=>void,any?:string,required?:boolean}){const {s}=useApp();const names=[...new Set([...s.departments.map(d=>d.name),...(value&&value!=='*'?[value]:[])])].sort();return <select value={value} required={required} onChange={e=>onChange(e.target.value)}>{any!==undefined&&<option value={any==='*'?'*':''}>{any==='*'?'All departments':any||'—'}</option>}{!any&&!value&&<option value="">Choose…</option>}{names.map(n=><option key={n}>{n}</option>)}</select>}
+export function DeptSelect({value,onChange,any,required}:{value:string,onChange:(v:string)=>void,any?:string,required?:boolean}){const {s}=useApp();const names=[...new Set([...s.departments.map(d=>d.name),...(value&&value!=='*'?[value]:[])])].sort();const options:SelectOption[]=[...(any!==undefined?[{value:any==='*'?'*':'',label:any==='*'?'All departments':any||'—'}]:[]),...names.map(n=>({value:n,label:n}))];return <SelectControl value={value} required={required} label="Department" placeholder="Choose a department" options={options} onChange={onChange}/>}
 // Location picker: people choose from the company's location tree (Company settings › Lists › Locations).
 // Anyone who may create locations can add one inline ("Site > Building" adds Building under Site).
 export function LocationInput({value,onChange,placeholder='Choose a location',required}:{value:string,onChange:(v:string)=>void,placeholder?:string,required?:boolean}){
  const {s,can,ask,toast,refresh}=useApp();const paths=s.locations.map(l=>l.path);const add=can('locations','create');
- return <select value={value} required={required} onChange={async e=>{const v=e.target.value;if(v!=='__add'){onChange(v);return}
+ const options:SelectOption[]=[...paths.map(p=>({value:p,label:p,icon:'MapPin'})),...(value&&!paths.includes(value)?[{value,label:`${value} (not in list)`,icon:'TriangleAlert'}]:[]),...(add?[{value:'__add',label:'Add a location…',icon:'Plus'}]:[])];
+ return <SelectControl value={value} required={required} label="Location" placeholder={placeholder} searchable options={options} onChange={async v=>{if(v!=='__add'){onChange(v);return}
   const path=await ask({title:'Add a location',body:'Use > to place it inside an existing location, e.g. Head Office > Store 2.',confirm:'Add',input:{label:'Location',required:true,placeholder:'Head Office > Store 2'}});if(path===false)return;
   const parts=path.split('>').map(x=>x.trim()).filter(Boolean);const name=parts.pop()||'';const parentPath=parts.join(' > ');const parent=parentPath?s.locations.find(l=>l.path.toLowerCase()===parentPath.toLowerCase()):null;
   if(parentPath&&!parent){toast(`“${parentPath}” is not a location yet. Add it first.`,'error');return}
-  try{const r=await api<{path:string}>('/api/org',{action:'location',name,parentId:parent?.id||null});await refresh();onChange(r.path)}catch(err){toast((err as Error).message,'error')}}}>
-  <option value="">{placeholder}</option>{value&&!paths.includes(value)&&<option value={value}>{value} (not in list)</option>}{paths.map(p=><option key={p} value={p}>{p}</option>)}{add&&<option value="__add">+ Add a location…</option>}
- </select>;
+  try{const r=await api<{path:string}>('/api/org',{action:'location',name,parentId:parent?.id||null});await refresh();onChange(r.path)}catch(err){toast((err as Error).message,'error')}}}/>;
 }
 // Pick-list for any company list (Company settings › Lists). Values outside the list are kept but flagged.
 export function LookupSelect({list,value,onChange,parent,placeholder='Choose…',required,label}:{list:string,value:string,onChange:(v:string)=>void,parent?:string,placeholder?:string,required?:boolean,label?:string}){
  const {s,can,ask,toast,refresh}=useApp();const manage=s.user.role==='admin'||can('settings','configure');
  const all=s.lookups?.[list]||[];const opts=[...new Set(all.filter(o=>parent===undefined||o.parent===parent).map(o=>o.value))];
- return <select value={value} required={required} aria-label={label} onChange={async e=>{const v=e.target.value;if(v!=='__add'){onChange(v);return}
+ const options:SelectOption[]=[...opts.map(o=>({value:o,label:o})),...(value&&!opts.includes(value)?[{value,label:`${value} (not in list)`,icon:'TriangleAlert'}]:[]),...(manage&&parent!==''?[{value:'__add',label:'Add new…',icon:'Plus'}]:[])];
+ return <SelectControl value={value} required={required} label={label} placeholder={parent===''?'Choose the parent first':placeholder} searchable={options.length>8} options={options} onChange={async v=>{if(v!=='__add'){onChange(v);return}
   const nv=await ask({title:`Add to ${label||'this list'}`,confirm:'Add',input:{label:'Value',required:true}});if(nv===false)return;
-  try{await api('/api/lookups',{action:'save',list,value:nv,parent:parent||''});await refresh();onChange(nv.trim())}catch(err){toast((err as Error).message,'error')}}}>
-  <option value="">{parent===''?'Choose the parent first':placeholder}</option>{value&&!opts.includes(value)&&<option value={value}>{value} (not in list)</option>}{opts.map(o=><option key={o} value={o}>{o}</option>)}{manage&&parent!==''&&<option value="__add">+ Add new…</option>}
-  {!opts.length&&!manage&&<option value="" disabled>No values yet. Ask an administrator.</option>}
- </select>;
+  try{await api('/api/lookups',{action:'save',list,value:nv,parent:parent||''});await refresh();onChange(nv.trim())}catch(err){toast((err as Error).message,'error')}}}/>;
 }
 // Vendor picker by name (records that store a vendor name, e.g. assets).
 export function VendorSelect({value,onChange}:{value:string,onChange:(v:string)=>void}){
  const {s,can,ask,toast,refresh}=useApp();const names=(s.vendors||[]).map(v=>v.name);const add=can('suppliers','create');
- return <select value={value} onChange={async e=>{const v=e.target.value;if(v!=='__add'){onChange(v);return}
+ const options:SelectOption[]=[...names.map(n=>({value:n,label:n,icon:'Store'})),...(value&&!names.includes(value)?[{value,label:`${value} (not in list)`,icon:'TriangleAlert'}]:[]),...(add?[{value:'__add',label:'Add a vendor…',icon:'Plus'}]:[])];
+ return <SelectControl value={value} label="Vendor" placeholder="Choose a vendor" searchable options={options} onChange={async v=>{if(v!=='__add'){onChange(v);return}
   const name=await ask({title:'Add a vendor',confirm:'Add',input:{label:'Vendor name',required:true}});if(name===false)return;
-  try{await api('/api/purchasing',{action:'vendor',name});await refresh();onChange(name.trim())}catch(err){toast((err as Error).message,'error')}}}>
-  <option value="">—</option>{value&&!names.includes(value)&&<option value={value}>{value} (not in list)</option>}{names.map(n=><option key={n} value={n}>{n}</option>)}{add&&<option value="__add">+ Add a vendor…</option>}
- </select>;
+  try{await api('/api/purchasing',{action:'vendor',name});await refresh();onChange(name.trim())}catch(err){toast((err as Error).message,'error')}}}/>;
 }
 
 // ── Data grid ───────────────────────────────────────────────────────────────

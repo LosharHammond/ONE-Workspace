@@ -92,6 +92,13 @@ export async function mcpDiscover(c:ConnectorRow){
  const resources=s.capabilities.resources?await mcpRpc(c,'resources/list',{},s.session).then(r=>(r.result?.resources||[]) as {uri:string,name?:string,description?:string}[]).catch(()=>[]):[];
  return {server:s.server,tools:tools.slice(0,200).map(t=>({name:String(t.name).slice(0,100),description:String(t.description||'').slice(0,300),readOnly:t.annotations?.readOnlyHint===true,destructive:t.annotations?.destructiveHint===true,inputSchema:t.inputSchema||{}})),resources:resources.slice(0,200).map(r=>({uri:String(r.uri).slice(0,300),name:String(r.name||'').slice(0,100),description:String(r.description||'').slice(0,300)}))};
 }
+// Reads one MCP resource (resources/read); the text is untrusted content.
+export async function mcpReadResource(c:ConnectorRow,uri:string,signal?:AbortSignal){
+ const s=await mcpSession(c,signal);
+ const r=await mcpRpc(c,'resources/read',{uri},s.session,signal);
+ const contents=(r.result?.contents||[]) as {text?:string}[];
+ return contents.map(x=>String(x.text||'')).join('\n').slice(0,20000);
+}
 export async function mcpCall(c:ConnectorRow,tool:string,args:Record<string,unknown>,signal?:AbortSignal){
  const s=await mcpSession(c,signal);
  const r=await mcpRpc(c,'tools/call',{name:tool,arguments:args},s.session,signal);

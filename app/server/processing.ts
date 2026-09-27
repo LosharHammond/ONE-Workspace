@@ -127,7 +127,7 @@ registerJob('file.process',async(job:JobRow,progress)=>{
   let failed='';const sum=await summarize(f,'recording',tr.segments.map(s=>({ref:mm(s.start),text:s.text}))).catch(e=>{failed=(e as Error).message;return null});
   if(!sum){await setStatus(f,'partial',failed?`Transcript ready; the summary could not be generated (${failed}).`:'Transcript ready. AI is not configured, so no summary was generated.');return}
   await batch([artifact(f,'summary',JSON.stringify(sum)),stmt('UPDATE files SET updated_at=? WHERE id=? AND tenant_id=?',now(),f.id,f.tenant_id)]);
-  await setStatus(f,'ready');return;
+  await setStatus(f,'ready');await run("INSERT INTO domain_events(id,tenant_id,type,entity_id,action,actor,payload_json,status,attempts,error,created_at) VALUES(?,?,'file.processed',?,'AI classification completed','processing',?,'pending',0,'',?)",uid(),f.tenant_id,f.id,JSON.stringify({type:'file'}),now());return;
  }
  if(f.bytes>MAX_EXTRACT){await setStatus(f,'unsupported','Documents over 20 MB are stored but not processed.');return}
  await setStatus(f,'extracting');await progress('extracting');
@@ -139,6 +139,6 @@ registerJob('file.process',async(job:JobRow,progress)=>{
  if(!sum){await setStatus(f,'partial',failed?`Text extracted; the summary could not be generated (${failed}).`:'Text extracted. AI is not configured, so no summary was generated.');return}
  const tags=Array.isArray(sum.tags)?(sum.tags as unknown[]).map(String).slice(0,8):[];
  await batch([artifact(f,'summary',JSON.stringify(sum),{method:ex.method}),stmt('UPDATE files SET updated_at=?,category=CASE WHEN category=\'\' THEN ? ELSE category END WHERE id=? AND tenant_id=?',now(),String(sum.classification||'').slice(0,60),f.id,f.tenant_id)]);
- void tags;await setStatus(f,'ready');
+ void tags;await setStatus(f,'ready');await run("INSERT INTO domain_events(id,tenant_id,type,entity_id,action,actor,payload_json,status,attempts,error,created_at) VALUES(?,?,'file.processed',?,'AI classification completed','processing',?,'pending',0,'',?)",uid(),f.tenant_id,f.id,JSON.stringify({type:'file'}),now());
 });
 registerJob('file.process:failed',async job=>{await run('UPDATE files SET processing_status=?,processing_error=? WHERE id=? AND tenant_id=?',job.status==='dead'?'failed':'retrying',job.last_error.slice(0,300),job.ref_id,job.tenant_id)});

@@ -4,11 +4,13 @@ import {api,useApi,go,ago,dateOnly,dateTime,bytes,cx,downloadCsv} from './lib';
 import {useApp,Btn,Chip,Header,Grid,Modal,Field,ErrorNote,Skeleton,Empty,Card,Icon,Note,Stat,Tabs,KV,TagPicker,Menu,type Col} from './kit';
 import {modules as moduleCatalog} from '../modules';
 import {PlatformIntegrations} from './integrations';
+import PlatformOS from './platform-os';
 
 // Platform Console: only the Platform Owner reaches this app (the API refuses everyone else).
 type TenantRow={id:string,slug:string,name:string,legalName:string,domains:string,status:string,plan:string,brandColor:string,currency:string,createdAt:string,members:number,assets:number,tickets:number,purchasing:number,lastActive:string|null};
 export default function Platform({parts}:{parts:string[]}){
  if(parts[0]==='audit')return <PlatformAudit/>;
+ if(parts[0]==='os')return <PlatformOS/>;
  if(parts[0]==='catalog')return <PlatformCatalog tab={parts[1]||'pages'}/>;
  if(parts[0]==='connectors')return <PlatformIntegrations parts={parts.slice(1)}/>;
  if(parts[0]==='workspaces'&&parts[1])return <WorkspaceDetail id={parts[1]} tab={parts[2]||'overview'}/>;

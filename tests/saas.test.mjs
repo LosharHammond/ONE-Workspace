@@ -51,6 +51,9 @@ test('3. Companies receive different page entitlements; removed pages are refuse
 
 test('4–5. Company A cannot see Company B or the Platform Console',async()=>{
  const t=await B.admin.post('/api/tickets',{action:'create',title:'BRAVO-SECRET printer jam',description:'bravo only',department:'IT'});assert.equal(t.status,200);B.ticket=t.data.id;
+ const ownGraph=await B.admin.get(`/api/graph?id=${B.ticket}&type=ticket`);assert.equal(ownGraph.status,200,JSON.stringify(ownGraph.data));assert.match(ownGraph.data.graph.root.title,/BRAVO-SECRET/);
+ assert.equal((await A.admin.get(`/api/graph?id=${B.ticket}&type=ticket`)).status,404,'forged source IDs cannot cross workspaces');
+ const aSearch=await A.admin.get('/api/graph?q=BRAVO-SECRET');assert.equal(aSearch.status,200);assert.ok(!JSON.stringify(aSearch.data).includes('BRAVO-SECRET'),'graph search must not disclose another workspace');
  assert.equal((await A.admin.get(`/api/tickets?id=${B.ticket}`)).status,404);
  for(const p of ['/api/platform','/api/platform?view=catalog','/api/platform?view=health','/api/connectors?scope=platform'])assert.equal((await A.admin.get(p)).status,403,p);
  assert.equal((await A.admin.post('/api/platform',{action:'catalog',page:'assets',changes:{platformOnly:true}})).status,403);
@@ -74,7 +77,7 @@ test('9. Unauthorized routes and APIs return 403/404 for the IT staff member',as
  for(const p of ['/api/inventory','/api/reports','/api/app-pages','/api/connectors','/api/roles','/api/platform'])assert.ok([403,404].includes((await c.get(p)).status),p);
  assert.ok([403,404].includes((await c.post('/api/purchasing',{action:'save',kind:'PR',title:'x',department:'IT',lines:[{description:'x',qty:1,unit:'ea',unitPrice:1}]})).status));
  assert.ok([403,404].includes((await c.post('/api/ai',{action:'run',id:'home.attention'})).status),'AI is not on the IT role');
- assert.equal((await c.get('/api/tickets')).status,200);assert.equal((await c.get('/api/assets')).status,200);
+ assert.equal((await c.get('/api/tickets')).status,200);assert.equal((await c.get('/api/assets')).status,200);assert.ok([403,404].includes((await c.get('/api/graph')).status),'graph page access is independently enforced');
 });
 
 test('10. An admin cannot assign a page the company does not own or exceed their own access',async()=>{
@@ -142,8 +145,14 @@ test('14. A company connects and tests a REST API and an MCP server',async()=>{
  assert.equal((await c.post('/api/connectors',{action:'mcp-call',id:A.mcp,tool:'list_items'})).data.result,'called list_items');
  await mockReset();
  const del=await c.post('/api/connectors',{action:'mcp-call',id:A.mcp,tool:'delete_item',args:{id:1}});assert.equal(del.data.needsConfirmation,true);
+ assert.ok(del.data.runId,'mutating call creates a durable proposal');
+ const proposal=sql(`SELECT status,input_json,requested_by FROM connector_action_runs WHERE id='${del.data.runId}'`)[0];assert.equal(proposal.status,'pending');assert.ok(proposal.requested_by);assert.ok(!proposal.input_json.includes('"id":1'),'proposal input is encrypted at rest');
  assert.ok(!(await mockLog()).some(e=>e.body.includes('delete_item')),'nothing is sent before confirmation');
- assert.equal((await c.post('/api/connectors',{action:'mcp-call',id:A.mcp,tool:'delete_item',args:{id:1},confirm:true})).data.result,'called delete_item');
+ const confirmed=await c.post('/api/connectors',{action:'mcp-confirm',runId:del.data.runId});assert.equal(confirmed.data.result,'called delete_item');assert.equal(confirmed.data.verified,false);
+ const completed=sql(`SELECT status,confirmed_by,verified FROM connector_action_runs WHERE id='${del.data.runId}'`)[0];assert.equal(completed.status,'succeeded');assert.equal(completed.confirmed_by,proposal.requested_by);assert.equal(completed.verified,0);
+ assert.equal((await c.post('/api/connectors',{action:'mcp-confirm',runId:del.data.runId})).status,409,'proposal can only be executed once');
+ assert.equal((await mockLog()).filter(e=>e.body.includes('delete_item')).length,1,'replay does not repeat external side effects');
+ const pendingAction=await c.post('/api/connectors',{action:'mcp-call',id:A.mcp,tool:'delete_item',args:{id:2}});assert.equal((await c.post('/api/connectors',{action:'mcp-cancel',runId:pendingAction.data.runId})).data.status,'cancelled');
  // Signed incoming webhooks.
  const wh=await c.post('/api/connectors',{action:'create',provider:'webhook',name:'Orders hook'});const secret=wh.data.webhookSecret;assert.ok(secret);leaks.push(secret);
  const body=JSON.stringify({event:'order.created'}),ts=String(Math.floor(Date.now()/1000));
@@ -217,6 +226,52 @@ test('21. AI mutations require confirmation',async()=>{
  assert.ok(!JSON.stringify(l.data).includes('"nope"'),'unknown widget types from the AI are dropped');
  assert.equal(sql(`SELECT priority FROM tickets WHERE id='${A.ticket}'`)[0].priority,before,'nothing changes until the user applies it');
  assert.equal(sql(`SELECT count(*) AS n FROM purchase_docs WHERE tenant_id='${A.id}'`)[0].n,docs);
+});
+
+test('21a. Governed agents publish immutable versions, run as the requester and obey the kill switch',async()=>{
+ const t=await A.admin.post('/api/tickets',{action:'create',title:'AGENT-CONTEXT desk printer',description:'Printer failure reported by the night shift.',department:'IT'});assert.equal(t.status,200);const ticket=t.data.id;
+ const created=await A.admin.post('/api/agents',{action:'create',name:'Service desk analyst',description:'Read-only ticket analysis',definition:{instructions:'Summarise relevant support issues.',allowedPages:['maintenance'],visibility:'workspace'}});assert.equal(created.status,200,JSON.stringify(created.data));
+ assert.equal((await A.admin.post('/api/agents',{action:'save',id:created.data.id,name:'Service desk analyst',description:'Read-only ticket analysis',definition:{instructions:'Summarise relevant support issues. Never change tickets.',allowedPages:['maintenance'],visibility:'workspace'}})).status,200);
+ const published=await A.admin.post('/api/agents',{action:'publish',id:created.data.id});assert.equal(published.status,200,JSON.stringify(published.data));assert.equal(published.data.version,1);
+ assert.equal((await A.admin.post('/api/agents',{action:'save',id:created.data.id,name:'Service desk analyst',description:'Read-only ticket analysis',definition:{instructions:'Updated draft only; do not change tickets.',allowedPages:['maintenance'],visibility:'workspace'}})).status,200);
+ const version=JSON.parse(sql(`SELECT definition_json FROM ai_agent_versions WHERE tenant_id='${A.id}' AND agent_id='${created.data.id}' AND version=1`)[0].definition_json);assert.match(version.instructions,/Never change tickets/,'published definitions are immutable');
+ const runResult=await A.admin.post('/api/agents',{action:'run',id:created.data.id,input:'Summarise AGENT-CONTEXT printer ticket'});assert.equal(runResult.status,200,JSON.stringify(runResult.data));assert.equal(runResult.data.version,1);assert.match(runResult.data.output,/company-a-mock/);
+ const requesterId=(await A.admin.get('/api/session')).data.user.id;const runRow=sql(`SELECT status,run_as,run_as_member,requested_by,agent_version FROM ai_agent_runs WHERE tenant_id='${A.id}' AND id='${runResult.data.runId}'`)[0];assert.equal(runRow.status,'succeeded');assert.equal(runRow.run_as,'requester');assert.equal(runRow.run_as_member,requesterId);assert.equal(runRow.requested_by,requesterId);assert.equal(runRow.agent_version,1);
+ assert.equal(sql(`SELECT status FROM tickets WHERE tenant_id='${A.id}' AND id='${ticket}'`)[0].status,'New','agent runs are read-only');
+ assert.equal((await B.admin.get('/api/agents')).status,404,'agent module remains unavailable to the starter workspace');
+ assert.equal((await A.admin.post('/api/agents',{action:'kill',id:created.data.id})).status,200);assert.equal((await A.admin.post('/api/agents',{action:'run',id:created.data.id,input:'Summarise the ticket'})).status,409,'kill switch blocks new runs');
+ assert.equal((await A.admin.post('/api/agents',{action:'resume',id:created.data.id})).status,200);
+ const privateAgent=await A.admin.post('/api/agents',{action:'create',name:'Private analyst',description:'Owner only',definition:{instructions:'Review authorized support issues.',allowedPages:['maintenance'],visibility:'private'}});assert.equal(privateAgent.status,200);
+ assert.equal((await A.admin.post('/api/agents',{action:'publish',id:privateAgent.data.id})).status,200);
+ const reader=await invite(A.admin,A,'Agent Reader',`agent-reader-${rand()}@${A.domain}`,{role:'employee',department:'IT'});
+ assert.equal((await reader.client.get(`/api/agents?id=${privateAgent.data.id}`)).status,404,'private agent metadata remains hidden');
+ assert.equal((await reader.client.post('/api/agents',{action:'run',id:privateAgent.data.id,input:'Review support issues'})).status,404,'private agent cannot be invoked by other members');
+});
+
+test('21b. Workspace Studio scopes app drafts, validates definitions and preserves immutable publish and rollback history',async()=>{
+ const definition={tables:[{key:'requests',name:'Requests',fields:[{key:'title',label:'Request title',type:'text',required:true},{key:'status',label:'Status',type:'select',options:['Open','Done'],default:'Open'},{key:'internal_note',label:'Internal note',type:'text',readRoles:['admin']}],titleField:'title',statuses:['Open','Done'],numbering:{prefix:'REQ'},permissions:{view:['*'],create:['*'],edit:['*'],delete:[],scope:'own'},searchFields:['title']}],forms:[{key:'request_form',name:'New request',table:'requests',sections:[{title:'Details',fields:['title','status','internal_note']}],submitLabel:'Submit'}],workflows:[],automations:[{id:'request-created',name:'Notify requester team',trigger:{type:'record_created',table:'requests'},conditions:[],actions:[{type:'notify'}],enabled:true}],reports:[],pages:[{id:'overview',title:'Requests'}],nav:[{label:'Requests',kind:'table',ref:'requests'}],permissions:{use:['*'],admin:['admin']},settings:{}};
+ const created=await A.admin.post('/api/studio',{action:'create',name:'Equipment requests',description:'Track internal equipment requests',definition});assert.equal(created.status,200,JSON.stringify(created.data));const id=created.data.id;
+ const invalid=structuredClone(definition);invalid.tables[0].fields[1].options=[];assert.equal((await A.admin.post('/api/studio',{action:'test',id,definition:invalid})).data.ok,false,'invalid schema is rejected by test mode');
+ const checked=await A.admin.post('/api/studio',{action:'test',id,definition});assert.equal(checked.status,200);assert.equal(checked.data.ok,true);assert.equal(checked.data.summary.forms,1);assert.equal(checked.data.checks.untrustedCode,false);
+ assert.equal((await A.admin.post('/api/studio',{action:'publish',id,note:'Initial'})).data.version,1);
+ const edited=structuredClone(definition);edited.pages[0].title='Equipment intake';assert.equal((await A.admin.post('/api/studio',{action:'save',id,name:'Equipment requests',description:'Updated draft',definition:edited,baseVersion:1})).status,200);
+ assert.equal((await A.admin.get(`/api/studio?id=${id}&version=published`)).data.definition.pages[0].title,'Requests','published version remains unchanged when a draft is edited');
+ assert.equal((await A.admin.post('/api/studio',{action:'publish',id})).data.version,2);
+ assert.equal((await A.admin.post('/api/studio',{action:'rollback',id,version:1})).data.version,3,'rollback creates a new immutable version');
+ const versions=sql(`SELECT version,definition_json FROM studio_app_versions WHERE tenant_id='${A.id}' AND app_id='${id}' ORDER BY version`);assert.deepEqual(versions.map(x=>x.version),[1,2,3]);assert.equal(JSON.parse(versions[0].definition_json).pages[0].title,'Requests');assert.equal(JSON.parse(versions[1].definition_json).pages[0].title,'Equipment intake');assert.equal(JSON.parse(versions[2].definition_json).pages[0].title,'Requests');
+ assert.equal((await B.admin.get(`/api/studio?id=${id}`)).status,404,'another workspace cannot read the application');
+ const member=await invite(A.admin,A,'Studio Reader',`studio-reader-${rand()}@${A.domain}`,{role:'employee',department:'IT'});assert.equal((await member.client.get('/api/studio')).data.apps.some(x=>x.id===id),true);const visible=await member.client.get(`/api/studio?id=${id}`);assert.equal(visible.status,200);assert.ok(!visible.data.definition.tables[0].fields.some(f=>f.key==='internal_note'),'field readRoles hides metadata from ordinary members');assert.ok(!visible.data.definition.forms[0].sections[0].fields.includes('internal_note'),'restricted fields are removed from form schemas');assert.equal((await member.client.post('/api/studio',{action:'save',id,name:'Compromised',description:'',definition})).status,403,'published app user cannot modify metadata');
+ const missing=(await A.admin.post('/api/studio/records',{action:'create',app:id,table:'requests',form:'request_form',data:{status:'Open'}}));assert.equal(missing.status,400,'required fields are enforced on record create');
+ const createdRecord=await A.admin.post('/api/studio/records',{action:'create',app:id,table:'requests',form:'request_form',data:{title:'Laptop replacement',status:'Open'}});assert.equal(createdRecord.status,200,JSON.stringify(createdRecord.data));
+ await settle();const ev=sql(`SELECT status,error FROM domain_events WHERE tenant_id='${A.id}' AND entity_id='${createdRecord.data.id}' ORDER BY created_at DESC`);assert.ok(ev.length>=1,'record creation produced a domain event');assert.ok(ev.every(e=>['done','pending','processing'].includes(e.status)),'domain events are processed, not deferred: '+JSON.stringify(ev));
+ const autoRuns=sql(`SELECT status,dry_run FROM studio_automation_runs WHERE tenant_id='${A.id}' AND app_id='${id}' AND automation_id='request-created'`);assert.equal(autoRuns.length,1,'the published automation ran exactly once for the new record (idempotent)');assert.equal(autoRuns[0].dry_run,0);assert.ok(['succeeded','queued','running'].includes(autoRuns[0].status),'automation run status: '+autoRuns[0].status);const graphHealth=await A.admin.get('/api/graph');assert.equal(graphHealth.status,200);assert.equal(typeof graphHealth.data.operations.pendingEvents,'number','admins can observe event processing');
+ const adminRecords=await A.admin.get(`/api/studio/records?app=${id}&table=requests`);assert.equal(adminRecords.status,200);assert.equal(adminRecords.data.records[0].data.title,'Laptop replacement');
+ const memberRecords=await member.client.get(`/api/studio/records?app=${id}&table=requests`);assert.equal(memberRecords.status,200);assert.equal(memberRecords.data.records.length,0,'own-scope records are not visible to another member');
+ assert.ok(!memberRecords.data.table.fields.some(f=>f.key==='internal_note'),'record API filters unreadable field metadata');assert.ok(!memberRecords.data.table.forms[0].sections[0].fields.includes('internal_note'),'record API filters unreadable field references');
+ assert.equal((await member.client.post('/api/studio/records',{action:'create',app:id,table:'requests',form:'request_form',data:{title:'Forged request',status:'Open',internal_note:'hidden'}})).status,403,'users cannot submit fields excluded by readRoles');
+ assert.equal((await A.admin.post('/api/studio/records',{action:'update',app:id,table:'requests',id:createdRecord.data.id,baseVersion:1,data:{title:'Laptop issued',status:'Done'}})).data.version,2,'updates use optimistic version numbers');assert.equal((await A.admin.post('/api/studio/records',{action:'update',app:id,table:'requests',id:createdRecord.data.id,baseVersion:1,data:{title:'Stale edit',status:'Open'}})).status,409,'stale record edits are rejected');
+ assert.equal(sql(`SELECT count(*) AS n FROM studio_record_versions WHERE tenant_id='${A.id}' AND record_id='${createdRecord.data.id}'`)[0].n,2,'record versions preserve each edit');assert.equal((await A.admin.post('/api/studio/records',{action:'delete',app:id,table:'requests',id:createdRecord.data.id})).status,200,'permitted delete is soft');assert.equal((await A.admin.get(`/api/studio/records?app=${id}&table=requests`)).data.records.length,0,'deleted rows are not listed');
+ assert.equal((await B.admin.get(`/api/studio/records?app=${id}&table=requests`)).status,404,'record table cannot cross tenant boundary');
 });
 
 test('22. The Platform Owner reaches everything through an audited support session',async()=>{

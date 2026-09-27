@@ -1,7 +1,9 @@
 'use client';
 import {useEffect,useMemo,useState,type ReactNode} from 'react';
 import {api,useApi,go,ago,dateOnly,readXlsx,parseCsv,sheetObjects,cx,downloadCsv} from './lib';
-import {useApp,TagPicker,Timeline,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Avatar,ErrorNote,Skeleton,Empty,KV,Card,Icon,Note,Segmented,Menu,type Col,LookupSelect} from './kit';
+import {ConnectedContext} from './context';
+import {CustomFields} from './studio-runtime';
+import {useApp,TagPicker,Timeline,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Avatar,ErrorNote,Skeleton,Empty,KV,Card,Icon,Note,Segmented,Menu,type Col,LookupSelect,SelectControl} from './kit';
 import {baseRoleLabels} from '../access-policy';
 
 type Member={id:string,name:string,email:string,role:string,role_id:string|null,department:string,title:string,phone:string,location:string,additional_locations:string[],manager_id:string|null,employee_code:string,active:number,status:'Active'|'Invited'|'Disabled',last_seen_at:string|null,created_at:string,updated_at:string|null,updated_by:string|null,manageable?:boolean};
@@ -35,6 +37,7 @@ function Profile({m,all,onClose}:{m?:Member,all:Member[],onClose:()=>void}){
   <div className="profile-hero"><Avatar name={m.name} size={72}/><div><h3>{m.name}</h3><p>{[m.title,m.department].filter(Boolean).join(' · ')}</p>{m.email&&<a href={`mailto:${m.email}`} className="btn btn-sm btn-default"><Icon name="Mail" size={15}/><span>Email</span></a>}</div></div>
   <KV items={[['Email',m.email],['Phone',m.phone],['Department',<a key="d" href={`#/spaces/d/${encodeURIComponent(m.department)}`}>{m.department}</a>],['Location',m.location],['Role',role?.name||baseRoleLabels[m.role]],['Reports to',m.manager_id&&<Who key="m" id={m.manager_id} sub/>],['Employee code',m.employee_code],['Last active',m.last_seen_at?ago(m.last_seen_at):'Not yet signed in']]}/>
   {reports.length>0&&<><h4 className="section-title">Direct reports · {reports.length}</h4><div className="mini-list">{reports.map(r=><a key={r.id} href={`#/people/directory/${r.id}`}><Avatar name={r.name} size={22}/><span>{r.name}<small>{r.title||r.department}</small></span></a>)}</div></>}
+  <CustomFields type="person" id={m.id}/><ConnectedContext type="person" id={m.id} compact title="Work connected to this person"/>
  </Inspector>;
 }
 
@@ -156,20 +159,22 @@ function PersonEditor({m,onClose,onSaved,onLink,onActivity}:{m?:Member,onClose:(
  const [v,setV]=useState({name:m?.name||'',email:m?.email||'',title:m?.title||'',phone:m?.phone||'',department:m?.department||(admin?'':s.user.department),location:m?.location||'',additionalLocations:m?.additional_locations||[] as string[],managerId:m?.manager_id||null as string|null,employeeCode:m?.employee_code||'',role:m?.role||'employee',roleId:m?.role_id||'',active:m?!!m.active:true});
  const f=(k:keyof typeof v)=>(e:{target:{value:string}})=>setV({...v,[k]:e.target.value});
  const customRoles=s.roles.filter(r=>admin||['employee','viewer'].includes(r.base));
- return <Inspector open onClose={onClose} width={580} eyebrow={m?`${m.status} member`:'Invite a person'} title={m?.name||'Invite a person'} actions={m&&<Menu trigger={o=><Btn size="sm" variant="ghost" icon="Ellipsis" title="More" onClick={o}/>} items={[{label:m.status==='Invited'?'Resend invitation':'Send password-reset link',icon:m.status==='Invited'?'Send':'KeyRound',onClick:()=>onLink(m.id),hidden:!m.active},{label:'Activity report',icon:'History',onClick:()=>onActivity(m)},{label:'View profile',icon:'IdCard',onClick:()=>go(`people/directory/${m.id}`)}]}/>}>
+ return <Inspector open onClose={onClose} width={680} eyebrow={m?`${m.status} member`:'Invite a person'} title={m?.name||'Invite a person'} actions={m&&<Menu trigger={o=><Btn size="sm" variant="ghost" icon="Ellipsis" title="More" onClick={o}/>} items={[{label:m.status==='Invited'?'Resend invitation':'Send password-reset link',icon:m.status==='Invited'?'Send':'KeyRound',onClick:()=>onLink(m.id),hidden:!m.active},{label:'Activity report',icon:'History',onClick:()=>onActivity(m)},{label:'View profile',icon:'IdCard',onClick:()=>go(`people/directory/${m.id}`)}]}/>}> 
   <form className="form-grid" onSubmit={async e=>{e.preventDefault();setBusy(true);try{const body={...v,roleId:v.roleId||null};const r=await api<any>('/api/people',m?{action:'update',id:m.id,...body}:{action:'create',...body});toast(m?'Member updated':r.note||(r.emailed?`Invitation emailed to ${v.email}`:'Invitation created'));onSaved(m?undefined:{...r,name:v.name,email:v.email})}catch(err){toast((err as Error).message,'error')}finally{setBusy(false)}}}>
    <Field label="Full name" wide><input required value={v.name} onChange={f('name')}/></Field>
    <Field label="Email" wide hint={m?'Email identifies the account and cannot be changed here.':s.tenant.domains?`Company domains: ${s.tenant.domains}`:undefined}><input required type="email" disabled={!!m} value={v.email} onChange={f('email')}/></Field>
+   <div className="form-section-title"><span>Work details</span><small>Role, contact details and organisational placement.</small></div>
    <Field label="Job title"><LookupSelect list="job-titles" label="Job titles" value={v.title} onChange={x=>setV({...v,title:x})}/></Field>
    <Field label="Phone"><input value={v.phone} onChange={f('phone')}/></Field>
    <Field label="Department"><DeptSelect value={v.department} required onChange={x=>setV({...v,department:x})}/></Field>
    <Field label="Employee code"><input value={v.employeeCode} onChange={f('employeeCode')}/></Field>
    <Field label="Primary location" wide><LocationInput value={v.location} onChange={x=>setV({...v,location:x})}/></Field>
    <Field label="Additional locations" wide><TagPicker values={v.additionalLocations} options={s.locations.map(l=>l.path)} onChange={x=>setV({...v,additionalLocations:x})} placeholder="None"/></Field>
+   <div className="form-section-title"><span>Access & reporting</span><small>Set the reporting line and the minimum access this person needs.</small></div>
    <Field label="Reporting manager" wide hint="First approver for requisitions and the org chart."><PersonSelect value={v.managerId} onChange={x=>setV({...v,managerId:x})} filter={p=>p.id!==m?.id}/></Field>
-   <Field label="Workspace role" hint="Sets the access level and permissions in this workspace only."><select value={v.roleId} onChange={e=>{const r=s.roles.find(x=>x.id===e.target.value);setV({...v,roleId:e.target.value,role:r?.base||v.role})}}><option value="">No custom role</option>{customRoles.map(r=><option key={r.id} value={r.id}>{r.name}</option>)}</select></Field>
-   <Field label="Access level"><select value={v.role} disabled={!!v.roleId} onChange={f('role')}>{(admin?['admin','manager','employee','viewer']:['employee','viewer']).map(r=><option key={r} value={r}>{r==='admin'?'Company Admin':baseRoleLabels[r]}</option>)}</select></Field>
-   {m&&<Field label="Membership"><select value={v.active?'1':'0'} onChange={e=>setV({...v,active:e.target.value==='1'})}><option value="1">Active</option><option value="0">Disabled</option></select></Field>}
+   <Field label="Workspace role" hint="Optional custom permissions for this workspace only."><SelectControl value={v.roleId} label="Workspace role" options={[{value:'',label:'No custom role',description:'Use the access level beside this field.',icon:'User'},...customRoles.map(r=>({value:r.id,label:r.name,description:`Based on ${r.base==='admin'?'Company Admin':baseRoleLabels[r.base]||r.base}`,icon:'ShieldCheck'}))]} onChange={roleId=>{const r=s.roles.find(x=>x.id===roleId);setV({...v,roleId,role:r?.base||v.role})}}/></Field>
+   <Field label="Access level" hint={v.roleId?'Controlled by the selected workspace role.':'The base permission level for this person.'}><SelectControl value={v.role} label="Access level" disabled={!!v.roleId} options={(admin?['admin','manager','employee','viewer']:['employee','viewer']).map(r=>({value:r,label:r==='admin'?'Company Admin':baseRoleLabels[r],description:r==='admin'?'Full workspace administration':r==='manager'?'Team oversight and approvals':r==='viewer'?'Read-only access':'Standard day-to-day access',icon:r==='admin'?'ShieldCheck':r==='manager'?'UsersRound':r==='viewer'?'Eye':'User'}))} onChange={role=>setV({...v,role})}/></Field>
+   {m&&<Field label="Membership"><SelectControl value={v.active?'1':'0'} label="Membership status" options={[{value:'1',label:'Active',description:'Can sign in and use assigned pages.',icon:'CircleCheck'},{value:'0',label:'Disabled',description:'Cannot sign in until reactivated.',icon:'Ban'}]} onChange={active=>setV({...v,active:active==='1'})}/></Field>}
    {!m&&<Note>An invitation link is created for this person. They choose their own password; nobody else ever sees it.</Note>}
    {m&&<p className="muted small field-wide">Created {dateOnly(m.created_at)}{m.updated_at?` · modified ${dateOnly(m.updated_at)}`:''}</p>}
    <div className="form-actions"><Btn variant="ghost" onClick={onClose}>Cancel</Btn><Btn type="submit" variant="primary" busy={busy}>{m?'Save changes':'Send invitation'}</Btn></div>

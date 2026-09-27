@@ -38,6 +38,10 @@ export const pageCatalog:CatalogPage[]=[
  P('projects','Project planner: lifecycle, plans, Gantt, finance and procurement.','FolderKanban','projects','projects','business',{flags:['autoGrant']}),
  P('tasks','Tasks: personal, department, project and space work.','ListChecks','tasks','tasks','starter',{flags:['autoGrant']}),
  P('messages','Company messaging: channels, threads and direct messages.','MessageSquare','messages','messages','starter',{flags:['autoGrant']}),
+ P('business','Goals, objectives, initiatives, customers, contracts, services, meetings and decisions, all connected in the Work Graph.','Target','business/goal','business','starter',{flags:['autoGrant']}),
+ P('graph','One Work Graph: how people, projects, purchasing, assets, files and decisions connect.','Share2','graph','graph','starter',{flags:['autoGrant']}),
+ P('studio','Workspace Studio: no-code apps with forms, data tables, workflows, automations and reports.','Blocks','studio','studio','business',{flags:['autoGrant']}),
+ P('agents','AI workforce: governed agents with tools, approvals, budgets and the AI Control Tower.','Bot','admin/ai','ai','business',{flags:['autoGrant'],dependsOn:['assistant']}),
  P('app-pages','Custom pages built with the visual page and widget builder.','LayoutGrid','pages','builder','business'),
  // Platform-only pages: never assignable to a company.
  {id:'platform.workspaces',name:'Workspaces',description:'Create, configure, suspend and enter company workspaces.',icon:'Building',route:'platform/workspaces',module:'platform',actions:['view'],plan:'enterprise',status:'stable',kind:'platform',dependsOn:[],connectors:[],flags:[],version:'1.0'},
@@ -52,8 +56,8 @@ export const planRank:Record<PagePlan,number>={starter:0,business:1,enterprise:2
 
 // Default packages. The Platform Owner can edit these and add more (stored in platform settings).
 export type PagePackage={id:string,name:string,description:string,pages:string[]};
-const starter=['people','locations','maintenance','assets','knowledge','documents','assistant','tasks','messages'];
-const business=[...starter,'projects','schedules','inventory','requests','procurement','suppliers','receipts','budgets','reports','it','connectors','app-pages'];
+const starter=['people','locations','maintenance','assets','knowledge','documents','assistant','tasks','messages','graph','business'];
+const business=[...starter,'projects','schedules','inventory','requests','procurement','suppliers','receipts','budgets','reports','it','connectors','app-pages','studio','agents'];
 export const defaultPackages:PagePackage[]=[
  {id:'starter',name:'Starter',description:'Help desk, assets, people, spaces, files and ONE, the AI assistant.',pages:starter},
  {id:'business',name:'Business',description:'Starter plus purchasing, inventory, maintenance, reports, connectors and the page builder.',pages:business},

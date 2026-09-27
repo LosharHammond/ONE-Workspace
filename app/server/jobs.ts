@@ -18,6 +18,8 @@ export function enqueueStatement(tenantId:string,kind:string,refId:string,payloa
 export function kick(limit=3){try{waitUntil(processDueJobs(limit).catch(e=>console.error('One Workspace jobs failed',e instanceof Error?e.name:'error')))}catch{/* outside a request (tests) */}}
 export async function processDueJobs(limit=3,tenantId?:string){
  await import('./job-handlers');
+ // Domain events first (Work Graph projection, automation and agent triggers), then due jobs.
+ await (await import('./events')).processEvents(30,tenantId).catch(e=>console.error('One Workspace events failed',e instanceof Error?e.message:'error'));
  const ts=now();let done=0;
  const due=await all<JobRow>(`SELECT * FROM jobs WHERE status IN ('queued','retrying') AND run_after<=? AND (locked_until IS NULL OR locked_until<?)${tenantId?' AND tenant_id=?':''} ORDER BY run_after LIMIT ?`,...[ts,ts,...(tenantId?[tenantId]:[]),limit]);
  for(const j of due){

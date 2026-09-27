@@ -57,9 +57,35 @@ async function collect(u:Member,clause:(type:SourceType,cols:string[],idCol:stri
 }
 function perTypeCap(hits:Hit[],perType:number){const byType=new Map<string,number>();return hits.filter(h=>{const n=byType.get(h.type)||0;if(n>=perType)return false;byType.set(h.type,n+1);return true})}
 // Keyword search.
+// Work Graph records that have no module search of their own (goals, customers, contracts, services,
+// meetings, decisions, Studio app records, synced external records). searchNodes re-checks visibility.
+const GRAPH_ONLY=['goal','objective','initiative','customer','contract','service','meeting','decision','studio_record','external'];
+async function graphHits(u:Member,terms:string[]):Promise<Hit[]>{
+ if(!hasAction(u,'graph'))return [];
+ const {searchNodes}=await import('./graph');
+ const nodes=await searchNodes(u,terms.join(' '),GRAPH_ONLY,20).catch(()=>[]);
+ return nodes.map(n=>({type:n.label,id:n.sourceId,title:n.title,sub:[n.status,n.provider?`from ${n.provider}`:''].filter(Boolean).join(' · '),link:n.url,text:`${n.label} "${n.title}"${n.status?`, status ${n.status}`:''}${n.department?`, ${n.department}`:''}. ${clip(n.summary||'',500)}${n.provider?` (source: ${n.provider}, ${n.syncMode||'live'})`:''}`,score:0}));
+}
+// Maps an app route to the Work Graph record it shows, for connected context in the assistant.
+export function routeGraphRef(route:string):{type:string,id:string}|null{
+ const p=route.replace(/^#?\/?/,'').split('?')[0].split('/');const id=(x?:string)=>x&&/^[A-Za-z0-9_-]{8,80}$/.test(x)?x:null;
+ switch(p[0]){
+  case 'tickets':return id(p[1])?{type:'ticket',id:p[1]}:null;
+  case 'assets':return id(p[1])?{type:'asset',id:p[1]}:id(p[2])?{type:'asset',id:p[2]}:null;
+  case 'projects':return id(p[1])?{type:'project',id:p[1]}:null;
+  case 'tasks':return id(p[2])?{type:'task',id:p[2]}:null;
+  case 'purchasing':return (p[1]==='pr'||p[1]==='po')&&id(p[2])?{type:p[1].toUpperCase(),id:p[2]}:null;
+  case 'people':return p[1]==='directory'&&id(p[2])?{type:'person',id:p[2]}:null;
+  case 'files':return id(p[2])?{type:'file',id:p[2]}:null;
+  case 'maintenance':return p[1]==='orders'&&id(p[2])?{type:'work_order',id:p[2]}:null;
+  case 'business':return id(p[2])?{type:p[1],id:p[2]}:null;
+  case 'apps':return p[2]==='table'&&id(p[4])?{type:'studio_record',id:p[4]}:null;
+ }
+ return null;
+}
 export async function searchWorkspace(u:Member,terms:string[],perType=8):Promise<Hit[]>{
  if(!terms.length)return [];
- const hits=await collect(u,(_t,cols)=>where(cols,terms),60);
+ const hits=[...await collect(u,(_t,cols)=>where(cols,terms),60),...await graphHits(u,terms)];
  return perTypeCap(hits.map(h=>({...h,score:score(terms,h.title,h.text)})).sort((a,b)=>b.score-a.score),perType);
 }
 // Specific records (e.g. vector-search candidates), each re-checked with the person's own permissions.

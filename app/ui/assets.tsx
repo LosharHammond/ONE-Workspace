@@ -6,6 +6,9 @@ import {AiActions} from './assistant';
 import {BarList} from './home';
 import {ImportGeneric} from './people';
 import {assetStatuses,assetConditions,assetKinds,bookValue} from '../data';
+import {ConnectedContext} from './context';
+import {CustomFields} from './studio-runtime';
+import {ConnectedApps} from './fabric';
 
 type Asset={id:string,code:string,name:string,category:string,subcategory:string,kind:string,brand:string,model:string,serial:string,barcode:string,status:string,condition:string,location:string,department:string,cost_centre:string,assigned_to:string|null,due_back:string|null,purchase_date:string|null,purchase_cost:number,useful_life_months:number,salvage_value:number,warranty_until:string|null,vendor:string,notes:string,disposal_date:string|null,disposal_method:string,disposal_value:number,disposal_reason:string,created_at:string,updated_at:string,version:number};
 const views=['mine','all','audits','dashboard'];
@@ -78,9 +81,10 @@ function AssetPanel({id,onClose,onChanged}:{id:string,onClose:()=>void,onChanged
    <div className="assign-card"><div><span className="eyebrow">Custody</span>{a.assigned_to?<><Who id={a.assigned_to} sub/>{a.due_back&&<small className={Date.parse(a.due_back)<Date.now()?'text-red':'muted'}>Due back {dateOnly(a.due_back)}</small>}</>:<span className="muted">In store · {a.location||'no location'}</span>}</div>{data.canAssign&&<div className="row-gap">{a.assigned_to&&<Btn size="sm" icon="Undo2" onClick={checkin}>Check in</Btn>}<Btn size="sm" variant="primary" icon="ArrowRightLeft" onClick={()=>setDialog('checkout')}>{a.assigned_to?'Reassign':'Check out'}</Btn></div>}</div>}
    <div className="asset-top"><KV items={[['Location',a.location],['Department',a.department],['Cost centre',a.cost_centre],['Brand / model',[a.brand,a.model].filter(Boolean).join(' ')],['Serial number',a.serial&&<span key="s" className="mono">{a.serial}</span>],['Condition',a.condition],['Purchased',a.purchase_date&&dateOnly(a.purchase_date)],['Cost',a.purchase_cost?money(a.purchase_cost,s.tenant.currency):''],['Book value',a.useful_life_months?`${money(book,s.tenant.currency)} (${a.useful_life_months} months, straight line)`:''],['Vendor',a.vendor],['Warranty until',a.warranty_until&&dateOnly(a.warranty_until)],['Last updated',ago(a.updated_at)]]}/><button className="qr-mini" title="Print label" onClick={()=>setDialog('label')}><QRCode value={a.barcode||a.code} size={92}/><small className="mono">{a.barcode||a.code}</small></button></div>
    {a.notes&&<div className="prose-box"><p>{a.notes}</p></div>}
-   <Tabs value={tab} onChange={setTab} items={[{id:'history',label:'History'},{id:'maintenance',label:'Maintenance',count:data.workOrders.length+data.tickets.length},{id:'files',label:'Photos & files',count:data.files.length},{id:'comments',label:'Comments',count:data.comments.length}]}/>
+   <Tabs value={tab} onChange={setTab} items={[{id:'history',label:'History'},{id:'maintenance',label:'Maintenance',count:data.workOrders.length+data.tickets.length},{id:'context',label:'Related context'},{id:'files',label:'Photos & files',count:data.files.length},{id:'comments',label:'Comments',count:data.comments.length}]}/>
    {tab==='history'&&<Timeline events={data.history}/>}
    {tab==='maintenance'&&(data.workOrders.length||data.tickets.length?<div className="mini-list">{data.workOrders.map((w:any)=><a key={w.id} href={`#/maintenance/orders/${w.id}`}><span className="mono">{w.number}</span><span>{w.title}<small>{w.completedAt?`Completed ${dateOnly(w.completedAt)}`:`Due ${dateOnly(w.dueAt)}`}{w.cost?` · ${money(w.cost,s.tenant.currency)}`:''}</small></span><Chip>{w.status}</Chip></a>)}{data.tickets.map((t:any)=><a key={t.id} href={`#/tickets/all/${t.id}`}><span className="mono">{t.number}</span><span>{t.title}</span><Chip>{t.status}</Chip></a>)}</div>:<p className="muted small">No work orders or tickets for this asset.</p>)}
+   {tab==='context'&&<><CustomFields type="asset" id={a.id}/><ConnectedApps type="asset" id={a.id}/><ConnectedContext type="asset" id={a.id} title="Purchase, custody and maintenance chain"/></>}
    {tab==='files'&&<Attachments type="asset" id={id} files={data.files} onChange={reload} canUpload={data.canEdit}/>}
    {tab==='comments'&&<Thread comments={data.comments} onPost={async body=>{await api('/api/comments',{type:'asset',id,body});await reload()}}/>}
   </>}

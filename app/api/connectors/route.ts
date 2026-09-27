@@ -2,7 +2,7 @@ import {hasAction,pageActions} from '../../access-policy';
 import {route,readBody,HttpError,all,first,stmt,batch,uid,now,str,idOf,oneOf,auditStatement,platformAuditStatement,requirePlatformOwner,tenantOf,tenantSettings,parseJson,origin,hash} from '../../server/core';
 import {connectorTypes,connectorTypeById} from '../../connector-catalog';
 import {loadConnector,secretsOf,sealSecrets,logStatement,outbound,markHealth,authHeaders,oauthApp,oauthUrls,mcpDiscover,mcpCall,canUseConnector,connectorRead,configOf,typeOf,type ConnectorRow,type Secrets} from '../../server/connectors';
-import {sealSecret,secretHint,safeUrl,PLATFORM_SCOPE} from '../../server/secrets';
+import {sealSecret,openSecret,secretHint,safeUrl,PLATFORM_SCOPE} from '../../server/secrets';
 import {planLimits} from '../../modules';
 import {grantedCapabilities,capabilitiesFor} from '../../connector-capabilities';
 import {enqueueStatement,kick,retryJob,jobFor} from '../../server/jobs';
@@ -23,8 +23,8 @@ const list=(v:unknown,max=100)=>Array.isArray(v)?[...new Set(v.map(x=>String(x).
 
 export const GET=route(async(req,u)=>{
  const url=new URL(req.url);const scope=scopeOf(u,url.searchParams);const id=url.searchParams.get('id');
- if(id){const c=await loadConnector(scope,idOf(id,'Connector'));requireConfigure(u,scope,c);const [logs,history]=await Promise.all([all('SELECT l.id,l.action,l.status,l.duration_ms AS ms,l.detail_json AS detail,l.created_at AS createdAt,m.name AS actorName FROM connector_logs l LEFT JOIN members m ON m.id=l.actor WHERE l.tenant_id=? AND l.connector_id=? ORDER BY l.created_at DESC LIMIT 80',scope,c.id),scope===PLATFORM_SCOPE?all("SELECT action,created_at AS createdAt,detail_json AS detail FROM platform_audit WHERE action LIKE 'connector.%' AND detail_json LIKE ? ORDER BY created_at DESC LIMIT 40",`%${c.id}%`):all('SELECT a.action,a.created_at AS createdAt,m.name AS actorName FROM audit a LEFT JOIN members m ON m.id=a.actor WHERE a.tenant_id=? AND a.record_id=? ORDER BY a.created_at DESC LIMIT 40',scope,c.id)]);
-  return {connector:view(c),logs,history,webhookUrl:c.provider==='webhook'?`${origin(req)}/api/hooks?id=${c.id}`:null,redirectUri:`${origin(req)}/api/connectors/oauth`}}
+ if(id){const c=await loadConnector(scope,idOf(id,'Connector'));requireConfigure(u,scope,c);const [logs,history,actionRuns]=await Promise.all([all('SELECT l.id,l.action,l.status,l.duration_ms AS ms,l.detail_json AS detail,l.created_at AS createdAt,m.name AS actorName FROM connector_logs l LEFT JOIN members m ON m.id=l.actor WHERE l.tenant_id=? AND l.connector_id=? ORDER BY l.created_at DESC LIMIT 80',scope,c.id),scope===PLATFORM_SCOPE?all("SELECT action,created_at AS createdAt,detail_json AS detail FROM platform_audit WHERE action LIKE 'connector.%' AND detail_json LIKE ? ORDER BY created_at DESC LIMIT 40",`%${c.id}%`):all('SELECT a.action,a.created_at AS createdAt,m.name AS actorName FROM audit a LEFT JOIN members m ON m.id=a.actor WHERE a.tenant_id=? AND a.record_id=? ORDER BY a.created_at DESC LIMIT 40',scope,c.id),all('SELECT r.id,r.action,r.status,r.origin,r.requested_by,r.confirmed_by AS confirmedBy,r.verified,r.error,r.created_at AS createdAt,r.finished_at AS finishedAt,m.name AS requesterName FROM connector_action_runs r LEFT JOIN members m ON m.id=r.requested_by WHERE r.tenant_id=? AND r.connector_id=? ORDER BY r.created_at DESC LIMIT 40',scope,c.id)]);
+  return {connector:view(c),logs,history,actionRuns,webhookUrl:c.provider==='webhook'?`${origin(req)}/api/hooks?id=${c.id}`:null,redirectUri:`${origin(req)}/api/connectors/oauth`}}
  const rows=await all<ConnectorRow>('SELECT * FROM connectors WHERE tenant_id=? ORDER BY name',scope);
  const configure=scope===PLATFORM_SCOPE||u.role==='admin'||hasAction(u,'connectors','configure');
  // Everyone sees their own personal connections; administrators see all company connectors (personal ones
@@ -41,15 +41,48 @@ export const POST=route(async(req,u)=>{
  const actor=u.id;
  // ── Use (people with "use connectors") ──
  if(action==='read'){const rows=await connectorRead(u,idOf(b.id,'Connector'),str(b.path,'Path',300,false),Math.min(50,Number(b.limit)||20));return {rows}}
+ if(action==='mcp-confirm'){
+  const runId=idOf(b.runId,'Action proposal'),proposal=await first<{id:string,connector_id:string,action:string,input_json:string,idempotency_key:string,status:string,requested_by:string,origin:string}>('SELECT id,connector_id,action,input_json,idempotency_key,status,requested_by,origin FROM connector_action_runs WHERE tenant_id=? AND id=?',scope,runId);
+  if(!proposal||proposal.requested_by!==u.id)throw new HttpError(404,'Action proposal not found.');
+  const c=await loadConnector(scope,proposal.connector_id);const allowed=parseJson<string[]>(c.allowed_tools_json,[]),mutating=parseJson<string[]>(c.mutating_tools_json,[]),known=parseJson<{name:string}[]>(c.tools_json,[]).some(t=>t.name===proposal.action);
+  if(c.provider!=='mcp'||c.status==='disabled'||c.paused||!known||!allowed.includes(proposal.action)||!mutating.includes(proposal.action))throw new HttpError(409,'This connector action is no longer enabled.');
+  if(scope!==PLATFORM_SCOPE&&u.role!=='admin'&&!hasAction(u,'connectors','configure'))throw new HttpError(403,'Only administrators can confirm tools that change data.');
+  const claim=await stmt("UPDATE connector_action_runs SET status='running',confirmed_by=? WHERE tenant_id=? AND id=? AND requested_by=? AND status='pending'",u.id,scope,proposal.id,u.id).run();
+  if(!claim.success||!claim.meta.changes)throw new HttpError(409,'This proposal has already been confirmed or resolved.');
+  const started=Date.now();let args:Record<string,unknown>={};
+  try{
+   args=JSON.parse(await openSecret(scope,`${c.id}:action:${proposal.id}`,proposal.input_json)) as Record<string,unknown>;
+   const result=await mcpCall(c,proposal.action,args,req.signal),finished=now(),status=result.isError?'failed':'succeeded',summary={isError:result.isError,resultChars:result.text.length,verified:false};
+   await batch([stmt('UPDATE connector_action_runs SET status=?,result_json=?,verified=0,error=?,finished_at=? WHERE tenant_id=? AND id=? AND status=\'running\'',status,JSON.stringify(summary),result.isError?'The remote tool reported an error.':'',finished,scope,proposal.id),logStatement(c,u.id,`tool:${proposal.action}`,result.isError?'error':'ok',Date.now()-started,{runId:proposal.id,mutating:true,resultChars:result.text.length}),audit(u,scope,req,'tool run',c.id,null,{runId:proposal.id,tool:proposal.action,status,verified:false})]);
+   return {ok:!result.isError,runId:proposal.id,tool:proposal.action,result:result.text,isError:result.isError,verified:false};
+  }catch(e){
+   const msg=(e instanceof Error?e.message:'The remote result could not be confirmed.').slice(0,200),finished=now();
+   await batch([stmt("UPDATE connector_action_runs SET status='uncertain',error=?,result_json=?,finished_at=? WHERE tenant_id=? AND id=? AND status='running'",'The remote call did not return a verifiable result; check the external system before retrying.',JSON.stringify({outcome:'unknown'}),finished,scope,proposal.id),logStatement(c,u.id,`tool:${proposal.action}`,'error',Date.now()-started,{runId:proposal.id,outcome:'unknown'}),audit(u,scope,req,'tool result uncertain',c.id,null,{runId:proposal.id,tool:proposal.action})]);
+   throw new HttpError(502,`The action may have reached ${c.name}, but its result could not be confirmed. Check the external system before trying again.`);
+  }
+ }
+ if(action==='mcp-cancel'){
+  const runId=idOf(b.runId,'Action proposal'),proposal=await first<{connector_id:string,action:string}>('SELECT connector_id,action FROM connector_action_runs WHERE tenant_id=? AND id=? AND requested_by=? AND status=\'pending\'',scope,runId,u.id);
+  if(!proposal)throw new HttpError(404,'Pending action proposal not found.');
+  const changed=await stmt("UPDATE connector_action_runs SET status='cancelled',error='Cancelled by requester.',finished_at=? WHERE tenant_id=? AND id=? AND requested_by=? AND status='pending'",now(),scope,runId,u.id).run();
+  if(!changed.meta.changes)throw new HttpError(409,'This proposal has already been resolved.');
+  const c=await loadConnector(scope,proposal.connector_id);await batch([logStatement(c,u.id,`tool:${proposal.action}`,'denied',0,{runId,stage:'cancelled'}),audit(u,scope,req,'tool proposal cancelled',c.id,{runId,tool:proposal.action},{status:'cancelled'})]);return {ok:true,runId,status:'cancelled'};
+ }
  if(action==='mcp-call'){
   const c=await loadConnector(scope,idOf(b.id,'Connector'));const tool=str(b.tool,'Tool',100);
   const page=scope===PLATFORM_SCOPE?'platform':String(b.page||'app-pages');
   if(scope!==PLATFORM_SCOPE&&!canUseConnector(u,c,page)&&!(u.role==='admin'||hasAction(u,'connectors','configure'))){await logStatement(c,actor,`tool:${tool}`,'denied').run();throw new HttpError(403,'This connector is not available to you here.')}
   const allowed=parseJson<string[]>(c.allowed_tools_json,[]),mutating=parseJson<string[]>(c.mutating_tools_json,[]);
   if(!allowed.includes(tool)){await logStatement(c,actor,`tool:${tool}`,'denied',0,{reason:'not allowed'}).run();throw new HttpError(403,'This tool is not allowed. An administrator must allow it first.')}
-  // Mutating tools need explicit confirmation and configure-level authority.
-  if(mutating.includes(tool)){if(b.confirm!==true)return {needsConfirmation:true,tool,message:`${tool} can change data in ${c.name}. Confirm to run it.`};if(scope!==PLATFORM_SCOPE&&u.role!=='admin'&&!hasAction(u,'connectors','configure'))throw new HttpError(403,'Only administrators can run tools that change data.')}
+  // Mutating tools are persisted as encrypted proposals. Only their original requester can confirm them.
+  if(b.args!==undefined&&(!b.args||typeof b.args!=='object'||Array.isArray(b.args)))throw new HttpError(400,'Tool arguments must be a JSON object.');
   const args=(b.args&&typeof b.args==='object'?b.args:{}) as Record<string,unknown>;if(JSON.stringify(args).length>20000)throw new HttpError(413,'Tool input is too large.');
+  if(mutating.includes(tool)){
+   if(scope!==PLATFORM_SCOPE&&u.role!=='admin'&&!hasAction(u,'connectors','configure'))throw new HttpError(403,'Only administrators can propose tools that change data.');
+   const runId=uid(),fingerprint=await hash(`${c.id}|${u.id}|${tool}|${JSON.stringify(args)}`),ts=now(),sealed=await sealSecret(scope,`${c.id}:action:${runId}`,JSON.stringify(args));
+   await batch([stmt('INSERT INTO connector_action_runs(id,tenant_id,connector_id,action,input_json,idempotency_key,status,origin,requested_by,result_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)',runId,scope,c.id,tool,sealed,`${fingerprint}:${runId}`,'pending','user',u.id,JSON.stringify({fingerprint}),ts),logStatement(c,u.id,`tool:${tool}`,'ok',0,{runId,mutating:true,stage:'proposed'}),audit(u,scope,req,'tool proposed',c.id,null,{runId,tool,fingerprint})]);
+   return {needsConfirmation:true,runId,tool,message:`${tool} can change data in ${c.name}. Review the persisted proposal, then confirm once to dispatch it.`};
+  }
   const started=Date.now();
   try{const r=await mcpCall(c,tool,args,req.signal);await batch([logStatement(c,actor,`tool:${tool}`,r.isError?'error':'ok',Date.now()-started,{argKeys:Object.keys(args).slice(0,20),mutating:mutating.includes(tool),resultChars:r.text.length}),...(mutating.includes(tool)?[audit(u,scope,req,'tool run',c.id,null,{tool})]:[])]);return {result:r.text,isError:r.isError,untrusted:true}}
   catch(e){await logStatement(c,actor,`tool:${tool}`,'error',Date.now()-started,{error:(e as Error).message.slice(0,200)}).run();throw e}
@@ -105,6 +138,8 @@ export const POST=route(async(req,u)=>{
   case 'disconnect':{
    // Explicit confirmation: the connector's exact name must be typed.
    if(String(b.confirm||'').trim()!==c.name)throw new HttpError(400,`Type the connector name “${c.name}” to confirm.`);
+   // Synced copies and their Work Graph nodes are removed with the connector.
+   await (await import('../../server/fabric')).purgeSynced(scope,c.id);
    await batch([stmt('DELETE FROM connectors WHERE id=? AND tenant_id=?',c.id,scope),audit(u,scope,req,'disconnected',c.id,{name:c.name,provider:c.provider},null),logStatement(c,actor,'disconnect','ok')]);return {ok:true};
   }
   case 'test':case 'sync':{

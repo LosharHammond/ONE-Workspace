@@ -99,6 +99,20 @@
       "when": 1790513470421,
       "tag": "0013_files_archive_task_templates",
       "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "6",
+      "when": 1790516884933,
+      "tag": "0014_company_operating_system",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "6",
+      "when": 1790529118305,
+      "tag": "0015_connected_work",
+      "breakpoints": true
     }
   ]
 }
