@@ -1,19 +1,48 @@
 import {route,readBody,HttpError,all,first,stmt,batch,uid,now,str,oneOf,idOf,num,requirePlatformOwner,platformAuditStatement,sessionToken,hash,clientIp,parseJson,OWNER_HOME_TENANT,isPlatformOwner,type Tenant} from '../../server/core';
 import {seedTenant,starterSettings,defaultSeedOptions,type SeedOptions} from '../../server/tenancy';
 import {identityFor,prepareToken,deliverToken} from '../../server/auth';
-import {moduleIds,planLimits,enabledModules} from '../../modules';
+import {moduleIds,planLimits,enabledModules,entitledPages,pagesForModules,legacyModules} from '../../modules';
+import {withDependencies,planRank,assignablePages,type PagePlan} from '../../page-catalog';
+import {effectiveCatalog,platformSettingStatement,platformSetting} from '../../server/platform-settings';
+import {platformAi,GROQ_DEFAULT_MODEL} from '../../server/ai';
 import type {Member} from '../../server/policy';
 
 // Platform Console API. Only the Platform Owner reaches any of this; every call is written to platform_audit.
 const plans=['starter','business','enterprise'] as const;
 const statuses=['active','suspended','archived'] as const;
 function domainsOf(v:unknown){const d=str(v,'Email domains',300,false).toLowerCase().split(',').map(s=>s.trim().replace(/^@/,'')).filter(Boolean);if(d.some(x=>!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(x)))throw new HttpError(400,'Enter email domains like company.com, separated by commas.');return d}
+// Company pages for a workspace: known, not platform-only, dependencies added, within the plan unless allowed.
+async function validPages(input:unknown,plan:string,allowAbovePlan:boolean){
+ if(!Array.isArray(input))throw new HttpError(400,'Choose the pages this company receives.');
+ const cat=await effectiveCatalog();const byId=new Map(cat.pages.map(p=>[p.id,p]));
+ const asked=input.map(String);
+ for(const p of asked){const c=byId.get(p);if(!c||!assignablePages.includes(p))throw new HttpError(400,'Choose valid pages.');if(c.kind==='platform')throw new HttpError(400,`${c.name} is platform-only and cannot be given to a company.`)}
+ const pages=withDependencies(asked).filter(p=>byId.get(p)?.kind==='company');
+ const above=pages.filter(p=>planRank[byId.get(p)!.plan]>planRank[(plan in planRank?plan:'business') as PagePlan]);
+ if(above.length&&!allowAbovePlan)throw new HttpError(400,`${above.map(p=>byId.get(p)!.name).join(', ')} need a higher plan. Upgrade the plan or allow pages above the plan.`);
+ return {pages,added:pages.filter(p=>!asked.includes(p))};
+}
 async function loadTenant(id:string){const t=await first<Tenant>('SELECT * FROM tenants WHERE id=?',id);if(!t)throw new HttpError(404,'Workspace not found.');return t}
 const settingsOf=(t:Tenant)=>parseJson<Record<string,unknown>>(t.settings_json,{});
 
 export const GET=route(async(req,u)=>{
  requirePlatformOwner(u);
  const url=new URL(req.url),id=url.searchParams.get('id'),view=url.searchParams.get('view');
+ if(view==='catalog'){
+  const cat=await effectiveCatalog();
+  const tenants=await all<Tenant>("SELECT * FROM tenants WHERE status!='archived' ORDER BY name");
+  return {...cat,workspaces:tenants.map(t=>({id:t.id,name:t.name,plan:t.plan,status:t.status,pages:entitledPages(settingsOf(t))}))};
+ }
+ if(view==='health'){
+  // Platform-wide AI consumption and connector status (counts only; no prompts or secrets).
+  const since=new Date(Date.now()-30*86400000).toISOString();
+  const [ai,connectors,cfg,platform]=await Promise.all([
+   all("SELECT t.id,t.name,count(a.id) AS requests,coalesce(sum(a.prompt_tokens+a.completion_tokens),0) AS tokens,coalesce(sum(1-a.ok),0) AS failures,(SELECT provider FROM ai_providers p WHERE p.tenant_id=t.id AND p.active=1) AS companyProvider FROM tenants t LEFT JOIN ai_usage a ON a.tenant_id=t.id AND a.created_at>=? WHERE t.status!='archived' GROUP BY t.id ORDER BY requests DESC",since),
+   all("SELECT c.tenant_id AS tenantId,coalesce(t.name,'Platform') AS workspace,c.id,c.name,c.provider,c.status,c.health,c.last_ok_at AS lastOkAt,c.last_error AS lastError FROM connectors c LEFT JOIN tenants t ON t.id=c.tenant_id ORDER BY c.health='failing' DESC,workspace,c.name LIMIT 500"),
+   platformSetting<{model?:string}>('ai',{}),platformAi(),
+  ]);
+  return {ai,connectors,aiDefault:{configured:!!platform,provider:'Groq',model:cfg.model||GROQ_DEFAULT_MODEL,keySource:'GROQ_API_KEY server secret'}};
+ }
  if(view==='audit'){await platformAuditStatement(u,'platform.view-audit',req).run();return {events:await all("SELECT p.*,i.email AS actorEmail,t.name AS tenantName FROM platform_audit p LEFT JOIN identities i ON i.id=p.actor_identity_id LEFT JOIN tenants t ON t.id=p.tenant_id ORDER BY p.created_at DESC LIMIT 300")}}
  if(id){
   const t=await loadTenant(idOf(id,'Workspace'));
@@ -29,7 +58,8 @@ export const GET=route(async(req,u)=>{
   ]);
   const last=await first<{at:string}>('SELECT max(last_seen_at) AS at FROM members WHERE tenant_id=?',t.id);
   const limits={...planLimits[t.plan]||planLimits.business,...(settings.limits as object||{})};
-  return {tenant:{...t,settings},modules:enabledModules(settings),limits,usage:{...usage,storageBytes:storage?.bytes||0,invited:invited?.n||0,lastActive:last?.at||null},admins,activity,support};
+  const cat=await effectiveCatalog();
+  return {tenant:{...t,settings},modules:enabledModules(settings),pages:entitledPages(settings),catalog:cat.pages,packages:cat.packages,limits,usage:{...usage,storageBytes:storage?.bytes||0,invited:invited?.n||0,lastActive:last?.at||null},admins,activity,support};
  }
  const tenants=await all("SELECT t.id,t.slug,t.name,t.legal_name AS legalName,t.domains,t.status,t.plan,t.brand_color AS brandColor,t.currency,t.created_at AS createdAt,(SELECT count(*) FROM members m WHERE m.tenant_id=t.id AND m.active=1) AS members,(SELECT count(*) FROM assets a WHERE a.tenant_id=t.id) AS assets,(SELECT count(*) FROM tickets k WHERE k.tenant_id=t.id) AS tickets,(SELECT count(*) FROM purchase_docs d WHERE d.tenant_id=t.id) AS purchasing,(SELECT max(m.last_seen_at) FROM members m WHERE m.tenant_id=t.id) AS lastActive FROM tenants t ORDER BY t.status='archived',t.created_at");
  const support=await first('SELECT s.id,s.tenant_id AS tenantId,t.name AS tenantName,s.started_at AS startedAt FROM support_sessions s JOIN tenants t ON t.id=s.tenant_id WHERE s.owner_identity_id=? AND s.ended_at IS NULL ORDER BY s.started_at DESC LIMIT 1',u.identityId);
@@ -41,6 +71,31 @@ export const POST=route(async(req,u)=>{
  const b=await readBody(req);const action=String(b.action||'');
  const log=(name:string,tenantId?:string|null,detail?:unknown)=>platformAuditStatement({...u,tenantId:tenantId??null},name,req,detail);
  if(action==='create')return create(u,b,req);
+ if(action==='ai-default'){
+  const model=str(b.model,'Model',120);if(!/^[w./:-]+$/.test(model))throw new HttpError(400,'Enter a valid model name.');
+  const before=await platformSetting<{model?:string}>('ai',{});
+  await batch([platformSettingStatement('ai',{...before,model},u.email),log('ai.default-model',null,{before:before.model||GROQ_DEFAULT_MODEL,after:model})]);
+  return {ok:true};
+ }
+ if(action==='catalog'){
+  const cat=await effectiveCatalog();const o={...cat.overrides};
+  if(b.page!==undefined){
+   const id=String(b.page);if(!assignablePages.includes(id))throw new HttpError(400,'Only company pages can be changed.');
+   const x=(b.changes&&typeof b.changes==='object'?b.changes:{}) as Record<string,unknown>;
+   const prev=o.pages?.[id]||{};
+   const next={...prev,...(x.status?{status:oneOf(x.status,['stable','beta'] as const,'status')}:{}),...(x.plan?{plan:oneOf(x.plan,['starter','business','enterprise'] as const,'plan')}:{}),...(x.platformOnly!==undefined?{platformOnly:!!x.platformOnly}:{}),...(x.description!==undefined?{description:str(x.description,'Description',300,false)}:{}),...(Array.isArray(x.dependsOn)?{dependsOn:x.dependsOn.map(String).filter(d=>assignablePages.includes(d)&&d!==id)}:{}),updatedAt:now()};
+   o.pages={...(o.pages||{}),[id]:next};
+   await batch([platformSettingStatement('catalog',o,u.email),log('catalog.page',null,{page:id,before:prev,after:next})]);
+   return {ok:true};
+  }
+  if(Array.isArray(b.packages)){
+   const packages=b.packages.slice(0,30).map((p:any)=>({id:str(p.id,'Package ID',40).toLowerCase().replace(/[^a-z0-9-]/g,'-'),name:str(p.name,'Package name',60),description:str(p.description,'Description',200,false),pages:withDependencies(Array.isArray(p.pages)?p.pages.map(String):[])}));
+   if(new Set(packages.map((p:{id:string})=>p.id)).size!==packages.length)throw new HttpError(400,'Package IDs must be unique.');
+   await batch([platformSettingStatement('catalog',{...o,packages},u.email),log('catalog.packages',null,{packages:packages.map((p:{id:string,pages:string[]})=>({id:p.id,pages:p.pages.length}))})]);
+   return {ok:true};
+  }
+  throw new HttpError(400,'Nothing to change.');
+ }
  if(action==='support-end'){
   const token=await hash(sessionToken(req));
   const s=await first<{support_session_id:string|null}>('SELECT support_session_id FROM sessions WHERE token_hash=?',token);
@@ -70,12 +125,27 @@ export const POST=route(async(req,u)=>{
   }
   case 'modules':{
    if(!Array.isArray(b.modules))throw new HttpError(400,'Choose modules.');
-   const mods=b.modules.map(String).filter(m=>moduleIds.includes(m));
-   await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,modules:mods}),t.id),log('workspace.modules',t.id,{before:enabledModules(settings),after:mods})]);
-   return {ok:true};
+   const asked=b.modules.map(String).filter(m=>moduleIds.includes(m));
+   // Module switches set the page entitlement to every page of the chosen modules. Modules added after this
+   // call was introduced (people, AI, connectors, builder, data) keep their current state unless named.
+   const current=enabledModules(settings);
+   const mods=[...new Set([...asked,...current.filter(m=>!legacyModules.includes(m)&&!asked.includes(m))])];
+   const {pages}=await validPages(pagesForModules(mods),t.plan,true);
+   await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,modules:mods,pages}),t.id),log('workspace.modules',t.id,{before:entitledPages(settings),after:pages}),stmt('INSERT INTO audit(id,action,actor,record_id,department,before_json,after_json,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?)',uid(),'Page entitlements changed by the Platform Owner',u.id,t.id,'Administration',JSON.stringify(entitledPages(settings)),JSON.stringify(pages),now(),t.id)]);
+   return {ok:true,pages};
+  }
+  case 'pages':case 'package':{
+   let input:unknown=b.pages;
+   if(action==='package'){const cat=await effectiveCatalog();const pkg=cat.packages.find(p=>p.id===b.package);if(!pkg)throw new HttpError(404,'Package not found.');input=pkg.pages}
+   const {pages,added}=await validPages(input,t.plan,!!b.allowAbovePlan||action==='package');
+   const before=entitledPages(settings);
+   const mods=enabledModules({pages});
+   await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,pages,modules:mods}),t.id),log('workspace.pages',t.id,{before,after:pages,package:action==='package'?b.package:undefined}),stmt('INSERT INTO audit(id,action,actor,record_id,department,before_json,after_json,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?)',uid(),'Page entitlements changed by the Platform Owner',u.id,t.id,'Administration',JSON.stringify(before),JSON.stringify(pages),now(),t.id)]);
+   return {ok:true,pages,added,removed:before.filter(p=>!pages.includes(p))};
   }
   case 'limits':{
-   const limits={maxUsers:Math.round(num(b.maxUsers,'User limit',1,100000)),maxStorageMb:Math.round(num(b.maxStorageMb,'Storage limit',10,10000000))};
+   const cur={...(planLimits[t.plan]||planLimits.business),...((settings.limits as object)||{})} as Record<string,number>;
+   const limits={maxUsers:Math.round(num(b.maxUsers,'User limit',1,100000)),maxStorageMb:Math.round(num(b.maxStorageMb,'Storage limit',10,10000000)),aiRequestsPerMonth:Math.round(num(b.aiRequestsPerMonth??cur.aiRequestsPerMonth,'AI requests per month',0,10000000)),maxConnectors:Math.round(num(b.maxConnectors??cur.maxConnectors,'Connector limit',0,1000))};
    await batch([stmt('UPDATE tenants SET settings_json=? WHERE id=?',JSON.stringify({...settings,limits}),t.id),log('workspace.limits',t.id,limits)]);
    return {ok:true};
   }
@@ -90,6 +160,15 @@ export const POST=route(async(req,u)=>{
     ...(status==='archived'?[stmt('UPDATE support_sessions SET ended_at=? WHERE tenant_id=? AND ended_at IS NULL',now(),t.id)]:[]),
     log(`workspace.${status==='active'?'reactivate':status==='suspended'?'suspend':'archive'}`,t.id,{from:t.status,to:status}),
    ]);
+   return {ok:true};
+  }
+  case 'admin-disable':case 'admin-enable':case 'admin-remove':{
+   // Company administrators are managed by the Platform Owner; a workspace always keeps one active admin.
+   const m=await first<{id:string,name:string,email:string,active:number,role:string}>('SELECT id,name,email,active,role FROM members WHERE id=? AND tenant_id=?',idOf(b.memberId,'Administrator'),t.id);
+   if(!m||m.role!=='admin')throw new HttpError(404,'Administrator not found.');
+   if(action!=='admin-enable'){const others=await first<{n:number}>("SELECT count(*) AS n FROM members WHERE tenant_id=? AND role='admin' AND active=1 AND id!=?",t.id,m.id);if(!others?.n)throw new HttpError(409,'This is the only active administrator. Invite another administrator first.')}
+   const next=action==='admin-remove'?{role:'employee',active:m.active}:{role:'admin',active:action==='admin-enable'?1:0};
+   await batch([stmt('UPDATE members SET role=?,active=?,role_id=CASE WHEN ?=? THEN NULL ELSE role_id END WHERE id=? AND tenant_id=?',next.role,next.active,next.role,"employee",m.id,t.id),...(next.active===0?[stmt('DELETE FROM sessions WHERE member_id=?',m.id)]:[]),stmt('INSERT INTO audit(id,action,actor,record_id,department,before_json,after_json,created_at,tenant_id) VALUES(?,?,?,?,?,?,?,?,?)',uid(),action==='admin-remove'?'Administrator removed by the Platform Owner':action==='admin-disable'?'Administrator disabled by the Platform Owner':'Administrator reactivated by the Platform Owner',u.id,m.id,'Administration',JSON.stringify({role:m.role,active:m.active}),JSON.stringify(next),now(),t.id),log(`workspace.${action}`,t.id,{email:m.email})]);
    return {ok:true};
   }
   case 'invite-admin':case 'reset-admin':{
@@ -131,18 +210,20 @@ async function create(u:Member,b:Record<string,unknown>,req:Request){
  const plan=oneOf(b.plan||'business',plans,'plan');
  const opts:SeedOptions={...defaultSeedOptions,...(b.defaults&&typeof b.defaults==='object'?Object.fromEntries(Object.entries(b.defaults as object).map(([k,v])=>[k,!!v])):{})} as SeedOptions;
  const mods=Array.isArray(b.modules)?b.modules.map(String).filter(m=>moduleIds.includes(m)):moduleIds;
+ const cat=await effectiveCatalog();const pkg=typeof b.package==='string'?cat.packages.find(p=>p.id===b.package):null;
+ const {pages}=await validPages(Array.isArray(b.pages)?b.pages:pkg?pkg.pages:pagesForModules(mods),String(b.plan||'business'),true);
  const color=/^#[0-9a-fA-F]{6}$/.test(String(b.brandColor))?String(b.brandColor):'#6D5EF8';
  const tenantId=uid(),memberId=uid();
  const idn=await identityFor(adminEmail,adminName);
  const tok=idn.activated?null:await prepareToken({identityId:idn.id,memberId,tenantId,purpose:'invite',createdBy:u.id});
  await batch([
-  stmt('INSERT INTO tenants(id,slug,name,legal_name,domains,status,plan,brand_color,currency,timezone,settings_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',tenantId,slug,name,str(b.legalName,'Legal name',160,false)||name,domains.join(','),'active',plan,color,str(b.currency||'GHS','Currency',8).toUpperCase(),str(b.timezone||'Africa/Accra','Time zone',60),JSON.stringify({...starterSettings,modules:mods,limits:planLimits[plan]}),now()),
+  stmt('INSERT INTO tenants(id,slug,name,legal_name,domains,status,plan,brand_color,currency,timezone,settings_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',tenantId,slug,name,str(b.legalName,'Legal name',160,false)||name,domains.join(','),'active',plan,color,str(b.currency||'GHS','Currency',8).toUpperCase(),str(b.timezone||'Africa/Accra','Time zone',60),JSON.stringify({...starterSettings,modules:enabledModules({pages}),pages,limits:planLimits[plan]}),now()),
   ...idn.statements,
   stmt("INSERT INTO members(id,name,email,role,department,active,created_at,tenant_id,title,identity_id,invited_at) VALUES(?,?,?,'admin','Administration',1,?,?,'Company administrator',?,?)",memberId,adminName,adminEmail,now(),tenantId,idn.id,idn.activated?null:now()),
   ...seedTenant(tenantId,memberId,name,opts),
   ...(tok?tok.statements:[]),
   stmt('INSERT INTO audit(id,action,actor,record_id,department,created_at,tenant_id) VALUES(?,?,?,?,?,?,?)',uid(),'Workspace created by the Platform Owner',u.id,tenantId,'Administration',now(),tenantId),
-  platformAuditStatement({...u,tenantId},'workspace.create',req,{slug,plan,modules:mods,defaults:opts,admin:adminEmail}),
+  platformAuditStatement({...u,tenantId},'workspace.create',req,{slug,plan,pages,defaults:opts,admin:adminEmail}),
  ]);
  const delivery=tok?await deliverToken(tok,{purpose:'invite',req,workspaceName:name,recipient:{email:adminEmail,name:adminName},inviterName:'One Workspace'}):{emailed:false,link:undefined,note:'The administrator already has an account and can switch into the new workspace.'};
  return {id:tenantId,slug,...delivery};

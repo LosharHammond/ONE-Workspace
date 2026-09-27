@@ -1,7 +1,7 @@
 'use client';
 import {useCallback,useEffect,useMemo,useRef,useState,type ReactNode} from 'react';
-import {api,useRoute,go,cx,pref,setPref,ago} from './lib';
-import {AppContext,AskDialog,Avatar,Btn,Icon,Inspector,Menu,useApp as useAppSafe,type Session} from './kit';
+import {api,useRoute,go,cx,pref,setPref,ago,PREVIEW_KEY} from './lib';
+import {AppContext,AskDialog,Avatar,Btn,Empty,Icon,Inspector,Menu,useApp as useAppSafe,type Session} from './kit';
 import {useFolders} from './files';
 import Home from './home';
 import People from './people';
@@ -16,6 +16,8 @@ import Platform from './platform';
 import Inventory from './inventory';
 import Maintenance from './maintenance';
 import Reports from './reports';
+import Pages from './builder';
+import {Assistant} from './assistant';
 
 type View={id:string,label:string,icon:string,count?:number,hidden?:boolean,section?:string};
 type AppDef={id:string,label:string,icon:string,tone:string,show:boolean,views:View[],render:(parts:string[])=>ReactNode};
@@ -34,6 +36,10 @@ export default function OneWorkspace(){
  return <Shell s={s} refresh={load}/>;
 }
 
+// Role preview is kept per tab and only for the same administrator and workspace.
+type RolePreview={roleName:string,tenantId:string,userId:string,permissions:Record<string,Record<string,string>>,rolePages:string[]|null};
+function readPreview(s:Session):RolePreview|null{try{const p=JSON.parse(sessionStorage.getItem(PREVIEW_KEY)||'null') as RolePreview|null;return p&&p.tenantId===s.tenant.id&&p.userId===s.user.id&&s.user.role==='admin'?p:null}catch{return null}}
+function NoAccess(){return <div className="page"><Empty icon="Lock" title="You don't have access to this page" action={<Btn variant="primary" icon="House" onClick={()=>go('home')}>Go to Home</Btn>}>Your role doesn't include it, or it isn't part of your company's plan. Ask an administrator if you need it.</Empty></div>}
 function signOut(){const f=document.createElement('form');f.method='post';f.action='/api/auth/logout';document.body.appendChild(f);f.submit()}
 function Splash(){return <div className="splash"><Logo size={44}/><span className="spin"/></div>}
 export function Logo({size=34}:{size?:number}){return <span className="logo" style={{width:size,height:size}} aria-hidden><svg viewBox="0 0 40 40" width={size} height={size}><rect x="2" y="2" width="36" height="36" rx="11" fill="var(--brand)"/><rect x="9" y="9" width="10" height="10" rx="3.2" fill="#fff" opacity=".95"/><rect x="21" y="9" width="10" height="10" rx="3.2" fill="#fff" opacity=".55"/><rect x="9" y="21" width="10" height="10" rx="3.2" fill="#fff" opacity=".55"/><rect x="21" y="21" width="10" height="10" rx="5" fill="#fff" opacity=".95"/></svg></span>}
@@ -96,13 +102,18 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
  const [askState,setAsk]=useState<{a:any,resolve:(v:string|false)=>void}|null>(null);
  const [palette,setPalette]=useState(false),[bell,setBell]=useState(false),[railOpen,setRailOpen]=useState(()=>pref('rail',true)),[mobileNav,setMobileNav]=useState(false),[shortcuts,setShortcuts]=useState(false);
  const [theme,setTheme]=useState<string>(()=>pref('theme','system'));
- const can=useCallback((page:string,action='view')=>{const p=s.user.permissions[page];return !!p&&p.view!=='none'&&!!p[action]&&p[action]!=='none'},[s]);
- const scope=useCallback((page:string,action='view')=>s.user.permissions[page]?.[action]||'none',[s]);
+ // "Preview as role": an administrator sees navigation and actions exactly as a role would. Data requests
+ // still run with the administrator's own access; the banner says so.
+ const [preview]=useState<RolePreview|null>(()=>readPreview(s));
+ const perms=preview?.permissions||s.user.permissions;
+ const can=useCallback((page:string,action='view')=>{const p=perms[page];return !!p&&p.view!=='none'&&!!p[action]&&p[action]!=='none'},[perms]);
+ const scope=useCallback((page:string,action='view')=>perms[page]?.[action]||'none',[perms]);
  const peopleById=useMemo(()=>new Map(s.people.map(p=>[p.id,p])),[s.people]);
  const toast=useCallback((msg:string,tone:'ok'|'error'|'info'='ok')=>{const id=Date.now()+Math.random();setToasts(t=>[...t.slice(-3),{id,msg,tone}]);setTimeout(()=>setToasts(t=>t.filter(x=>x.id!==id)),tone==='error'?7000:4000)},[]);
  const ask=useCallback((a:any)=>new Promise<string|false>(resolve=>setAsk({a,resolve})),[]);
  const ctx=useMemo(()=>({s,can,scope,person:(id?:string|null)=>id?peopleById.get(id):undefined,refresh,toast,ask}),[s,can,scope,peopleById,refresh,toast,ask]);
- const admin=s.user.role==='admin';
+ const admin=s.user.role==='admin'&&!preview;
+ const strict=preview?!!preview.rolePages:!!s.user.rolePages;
  // Keep counters fresh while the app is open.
  useEffect(()=>{const t=setInterval(()=>{if(document.visibilityState==='visible')refresh()},90000);return()=>clearInterval(t)},[refresh]);
  useEffect(()=>{document.documentElement.dataset.theme=theme==='system'?'':theme;setPref('theme',theme)},[theme]);
@@ -116,19 +127,21 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
   {id:'home',label:'Home',icon:'House',tone:'violet',show:true,views:[],render:()=> <Home/>},
   {id:'tickets',label:'Tickets',icon:'LifeBuoy',tone:'orange',show:can('maintenance'),views:[{id:'mine',label:'Assigned to me',icon:'UserCheck',count:s.counts.tickets},{id:'requested',label:'Raised by me',icon:'Send'},{id:'department',label:'My department',icon:'Building2'},{id:'queue',label:'Team queue',icon:'Inbox',hidden:!can('maintenance','update')},{id:'board',label:'Board',icon:'Kanban'},{id:'all',label:'All tickets',icon:'List'}],render:p=><Tickets parts={p}/>},
   {id:'purchasing',label:'Purchasing',icon:'ShoppingBag',tone:'green',show:can('requests')||can('procurement'),views:[{id:'inbox',label:'Approvals inbox',icon:'Stamp',count:s.counts.approvals},{id:'pr',label:'Requisitions',icon:'ClipboardList',hidden:!can('requests')},{id:'po',label:'Purchase orders',icon:'FileText',hidden:!can('procurement')},{id:'vendors',label:'Vendors',icon:'Store',hidden:!can('suppliers')&&!can('procurement')},{id:'budgets',label:'Budgets',icon:'PiggyBank',hidden:!can('budgets')},{id:'workflows',label:'Approval workflows',icon:'Workflow',hidden:!admin}],render:p=><Purchasing parts={p}/>},
-  {id:'assets',label:'Assets',icon:'Boxes',tone:'teal',show:!s.user.permissions.assets||s.tenant.modules.includes('assets'),views:[{id:'mine',label:'My assets',icon:'Laptop'},{id:'all',label:'Asset register',icon:'Database',hidden:!can('assets')},{id:'audits',label:'Asset audits',icon:'ClipboardCheck',hidden:!can('assets')},{id:'dashboard',label:'Overview',icon:'ChartPie',hidden:!can('assets')}],render:p=><Assets parts={p}/>},
+  {id:'assets',label:'Assets',icon:'Boxes',tone:'teal',show:can('assets')||(!strict&&s.tenant.modules.includes('assets')),views:[{id:'mine',label:'My assets',icon:'Laptop'},{id:'all',label:'Asset register',icon:'Database',hidden:!can('assets')},{id:'audits',label:'Asset audits',icon:'ClipboardCheck',hidden:!can('assets')},{id:'dashboard',label:'Overview',icon:'ChartPie',hidden:!can('assets')}],render:p=><Assets parts={p}/>},
   {id:'inventory',label:'Inventory',icon:'Package',tone:'amber',show:can('inventory')&&s.tenant.modules.includes('inventory'),views:[{id:'items',label:'Stock items',icon:'Package'},{id:'reorder',label:'Reorder list',icon:'TriangleAlert'},{id:'moves',label:'Movements',icon:'ArrowRightLeft'}],render:p=><Inventory parts={p}/>},
   {id:'maintenance',label:'Maintenance',icon:'Wrench',tone:'indigo',show:can('schedules'),views:[{id:'orders',label:'Work orders',icon:'ClipboardList'},{id:'mine',label:'Assigned to me',icon:'UserCheck'},{id:'plans',label:'Preventive plans',icon:'CalendarClock'}],render:p=><Maintenance parts={p}/>},
-  {id:'people',label:'People',icon:'Users',tone:'sky',show:can('people'),views:[{id:'directory',label:'Directory',icon:'Contact'},{id:'org',label:'Org chart',icon:'Network'},{id:'departments',label:'Departments',icon:'Building2'},{id:'locations',label:'Locations',icon:'MapPin',hidden:!can('locations')},{id:'manage',label:'Manage users',icon:'UserCog',hidden:!can('settings','manage_members')}],render:p=><People parts={p}/>},
+  {id:'people',label:'People',icon:'Users',tone:'sky',show:can('people')||can('settings','manage_members'),views:[{id:'directory',label:'Directory',icon:'Contact'},{id:'org',label:'Org chart',icon:'Network'},{id:'departments',label:'Departments',icon:'Building2'},{id:'locations',label:'Locations',icon:'MapPin',hidden:!can('locations')},{id:'manage',label:'Manage users',icon:'UserCog',hidden:!can('settings','manage_members')}],render:p=><People parts={p}/>},
   {id:'spaces',label:'Spaces',icon:'LibraryBig',tone:'pink',show:can('knowledge'),views:[],render:p=><Spaces parts={p}/>},
   {id:'files',label:'Files',icon:'FolderClosed',tone:'amber',show:can('documents'),views:[],render:p=><Files parts={p}/>},
   {id:'reports',label:'Reports',icon:'ChartColumn',tone:'blue',show:can('reports'),views:[],render:p=><Reports parts={p}/>},
+  {id:'pages',label:'Pages',icon:'LayoutGrid',tone:'violet',show:can('app-pages'),views:[],render:p=><Pages parts={p}/>},
   {id:'ops',label:'Operations',icon:'Factory',tone:'slate',show:['it','research'].some(p=>can(p))||(can('receipts')&&admin),views:[{id:'it',label:'IT & CCTV storage',icon:'HardDrive',hidden:!can('it')},{id:'research',label:'Consumer research',icon:'FlaskConical',hidden:!can('research')},{id:'inventory',label:'Imported stock register',icon:'Package',hidden:!can('inventory'),section:'Imported registers'},{id:'receipts',label:'Imported receipts',icon:'Truck',hidden:!can('receipts'),section:'Imported registers'},{id:'budgets',label:'Imported budgets',icon:'PiggyBank',hidden:!can('budgets'),section:'Imported registers'}],render:p=><Operations parts={p}/>},
-  {id:'admin',label:'Admin',icon:'Settings2',tone:'gray',show:admin||can('audit'),views:[{id:'company',label:'Company settings',icon:'Building',hidden:!admin},{id:'roles',label:'Roles & permissions',icon:'ShieldCheck',hidden:!admin},{id:'overrides',label:'Access overrides',icon:'KeyRound',hidden:!admin},{id:'data',label:'Data hub',icon:'DatabaseZap',hidden:!can('company-data')},{id:'activity',label:'Activity log',icon:'History',hidden:!can('audit')},{id:'security',label:'Security log',icon:'ShieldAlert',hidden:!admin}],render:p=><Admin parts={p}/>},
+  {id:'admin',label:'Admin',icon:'Settings2',tone:'gray',show:admin||can('audit'),views:[{id:'company',label:'Company settings',icon:'Building',hidden:!admin},{id:'roles',label:'Roles & permissions',icon:'ShieldCheck',hidden:!admin},{id:'overrides',label:'Access overrides',icon:'KeyRound',hidden:!admin},{id:'data',label:'Data hub',icon:'DatabaseZap',hidden:!can('company-data')},{id:'activity',label:'Activity log',icon:'History',hidden:!can('audit')},{id:'security',label:'Security log',icon:'ShieldAlert',hidden:!admin},{id:'connectors',label:'Connectors',icon:'Link',hidden:!(admin&&s.tenant.modules.includes('integrations'))&&!can('connectors','configure'),section:'Integrations'},{id:'ai',label:'AI settings',icon:'Sparkles',hidden:!admin,section:'Integrations'}],render:p=><Admin parts={p}/>},
   // The Platform app exists only for the Platform Owner and is separate from company administration.
-  {id:'platform',label:'Platform',icon:'Globe',tone:'red',show:owner,views:[{id:'workspaces',label:'Workspaces',icon:'Building'},{id:'audit',label:'Platform audit',icon:'ScrollText'}],render:p=><Platform parts={p}/>},
+  {id:'platform',label:'Platform',icon:'Globe',tone:'red',show:owner&&!preview,views:[{id:'workspaces',label:'Workspaces',icon:'Building'},{id:'catalog',label:'Page catalog',icon:'LayoutGrid'},{id:'connectors',label:'Connectors & AI',icon:'Link'},{id:'audit',label:'Platform audit',icon:'ScrollText'}],render:p=><Platform parts={p}/>},
  ];
  const visibleApps=apps.filter(a=>a.show);
+ const denied=!!route.app&&apps.some(a=>a.id===route.app)&&!visibleApps.some(a=>a.id===route.app);
  const current=visibleApps.find(a=>a.id===route.app)||visibleApps[0];
  // First load with no route: go to the role's default landing screen.
  const landed=useRef(false);
@@ -147,6 +160,8 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
   if(Date.now()-pendingG.current<900){const map:Record<string,string>={h:'home',t:'tickets',p:'purchasing',a:'assets',i:'inventory',m:'maintenance',r:'reports',u:'people',s:'spaces',f:'files',o:'ops',x:'admin'};if(map[e.key]){go(map[e.key]);pendingG.current=0}}
  };window.addEventListener('keydown',f);return()=>window.removeEventListener('keydown',f)},[]);
 
+ const [paletteQuery,setPaletteQuery]=useState('');
+ useEffect(()=>{const f=(e:Event)=>{setPaletteQuery(String((e as CustomEvent).detail||''));setPalette(true)};window.addEventListener('ows:search',f);return()=>window.removeEventListener('ows:search',f)},[]);
  const create=[
   {label:'New ticket',icon:'LifeBuoy',path:'tickets/new',show:can('maintenance','create')},
   {label:'New requisition',icon:'ClipboardList',path:'purchasing/pr/new',show:can('requests','create')},
@@ -181,6 +196,7 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
    </aside>
    <div className="stage">
     {s.support&&<SupportBanner/>}
+    {preview&&<div className="support-banner preview-banner" role="status"><Icon name="ShieldCheck" size={17}/><span><b>Previewing as {preview.roleName}</b> · Navigation and actions show what this role can use. Data still loads with your own access.</span><button className="support-exit" onClick={()=>{try{sessionStorage.removeItem(PREVIEW_KEY)}catch{}location.hash='#/admin/roles';location.reload()}}>Exit preview</button></div>}
     <header className="topbar">
      <button className="topbar-menu" aria-label="Open navigation" onClick={()=>setMobileNav(!mobileNav)}><Icon name="Menu"/></button>
      {!railOpen&&<Btn size="sm" variant="ghost" icon="PanelLeftOpen" title="Show sidebar" onClick={()=>{setRailOpen(true);setPref('rail',true)}}/>}
@@ -190,11 +206,12 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
       {create.length>0&&<Menu trigger={open=><Btn variant="primary" icon="Plus" onClick={open}>New</Btn>} items={create.map(c=>({label:c.label,icon:c.icon,onClick:()=>go(c.path)}))}/>}
      </div>
     </header>
-    <main className="canvas" key={current.id}>{current.render(route.parts)}</main>
+    <main className="canvas" key={denied?'denied':current.id}>{denied?<NoAccess/>:current.render(route.parts)}</main>
    </div>
    <div className="mobile-scrim" onClick={()=>setMobileNav(false)}/>
   </div>
-  {palette&&<Palette apps={visibleApps} create={create} onClose={()=>setPalette(false)}/>}
+  {palette&&<Palette apps={visibleApps} create={create} initial={paletteQuery} onClose={()=>{setPalette(false);setPaletteQuery('')}}/>}
+  {!preview&&<Assistant/>}
   <Notifications open={bell} onClose={()=>setBell(false)}/>
   {shortcuts&&<Shortcuts onClose={()=>setShortcuts(false)}/>}
   <AskDialog ask={askState?.a||null} onDone={v=>{askState?.resolve(v);setAsk(null)}}/>
@@ -213,8 +230,8 @@ function HomeRail(){const {s,can}=useAppSafe();const links=[{href:'#/purchasing/
 function SpacesRail(){const {s}=useAppSafe();const route=useRoute();const cur=route.parts[0]==='d'?route.parts[1]:route.parts[0]===undefined?'__home':'';return <nav className="rail-nav"><a className={cx('rail-link',cur==='__home'&&'on')} href="#/spaces"><Icon name="LayoutGrid" size={17}/><span>All spaces</span></a><a className={cx('rail-link',cur==='company'&&'on')} href="#/spaces/d/company"><Icon name="Megaphone" size={17}/><span>Company</span></a><p className="rail-section">Departments</p>{s.departments.map(d=><a key={d.id} className={cx('rail-link',cur===d.name&&'on')} href={`#/spaces/d/${encodeURIComponent(d.name)}`}><span className="space-dot" style={{background:d.color||`hsl(${[...d.name].reduce((h,c)=>(h*31+c.charCodeAt(0))%360,0)} 65% 60%)`}}/><span>{d.name}</span></a>)}</nav>}
 function FilesRail(){const {data}=useFolders();const route=useRoute();const cur=route.parts[0]||'root';const folders=(data?.folders||[]) as {id:string,parent_id:string|null,name:string}[];const tree=(parent:string|null,depth:number):ReactNode=>folders.filter(f=>f.parent_id===parent).map(f=><div key={f.id}><a className={cx('rail-link',cur===f.id&&'on')} style={{paddingLeft:12+depth*14}} href={`#/files/${f.id}`}><Icon name={cur===f.id?'FolderOpen':'Folder'} size={17}/><span>{f.name}</span></a>{tree(f.id,depth+1)}</div>);return <nav className="rail-nav"><a className={cx('rail-link',cur==='root'&&'on')} href="#/files/root"><Icon name="HardDrive" size={17}/><span>All files</span></a><a className={cx('rail-link',cur==='recent'&&'on')} href="#/files/recent"><Icon name="Clock" size={17}/><span>Recent</span></a><a className={cx('rail-link',cur==='mine'&&'on')} href="#/files/mine"><Icon name="User" size={17}/><span>My uploads</span></a><p className="rail-section">Folders</p>{tree(null,0)}</nav>}
 
-function Palette({apps,create,onClose}:{apps:AppDef[],create:{label:string,icon:string,path:string}[],onClose:()=>void}){
- const [q,setQ]=useState(''),[results,setResults]=useState<{type:string,title:string,sub:string,link:string}[]>([]),[sel,setSel]=useState(0),[loading,setLoading]=useState(false);
+function Palette({apps,create,onClose,initial=''}:{apps:AppDef[],create:{label:string,icon:string,path:string}[],onClose:()=>void,initial?:string}){
+ const [q,setQ]=useState(initial),[results,setResults]=useState<{type:string,title:string,sub:string,link:string}[]>([]),[sel,setSel]=useState(0),[loading,setLoading]=useState(false);
  useEffect(()=>{if(q.trim().length<2){setResults([]);return}setLoading(true);const t=setTimeout(async()=>{try{setResults((await api<any>('/api/search?q='+encodeURIComponent(q))).results)}catch{setResults([])}finally{setLoading(false)}},180);return()=>clearTimeout(t)},[q]);
  const nav=[...apps.flatMap(a=>[{type:'Go to',title:a.label,sub:'',link:`#/${a.id}`,icon:a.icon},...a.views.filter(v=>!v.hidden).map(v=>({type:'Go to',title:`${a.label} › ${v.label}`,sub:'',link:`#/${a.id}/${v.id}`,icon:v.icon}))]),...create.map(c=>({type:'Create',title:c.label,sub:'',link:'#/'+c.path,icon:c.icon}))];
  const ql=q.toLowerCase();

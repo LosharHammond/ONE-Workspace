@@ -74,6 +74,59 @@ Status key: **Working** (existed before and still works) · **New** (implemented
 | Saved views, configurable columns, filters, pagination on management tables | New | Manual | Saved views stored per person per workspace. |
 | Imports with validation preview and error report | New | E2E (people/departments) | People, departments, assets, inventory. |
 
+## Page catalog, entitlements and role pages (migration 0009)
+
+| Feature | Status | Verified | Notes |
+|---|---|---|---|
+| Central page catalog (id, name, description, icon, route, module, actions, plan, status, version, dependencies, connectors, flags, core/company/platform) | New | E2E + Manual | `app/page-catalog.ts`; owner overrides (status, plan, platform-only, dependencies) in `platform_settings`. |
+| Per-company page entitlements, packages (Starter/Business/Enterprise, editable), beta pages, dependencies added automatically, plan check | New | E2E | Removing a page hides it, blocks direct links (403 page) and refuses its API; data kept; audited in both logs. |
+| Platform-only pages refused in every company | New | E2E (refused on assign) | Enforced when loading access. |
+| Company preview of what a company sees | New | Manual | Pages & modules tab. |
+| Roles limited to a subset of entitled pages (deny by default) | New | E2E | `roles.pages_json`; Home always included. |
+| Role cannot receive pages the company lacks, permissions beyond the creator's own, or actions without View | New | E2E | 400/403 from `/api/roles`. |
+| Department role templates (IT, Human Resources, Finance, Procurement) | New | E2E (seeded) | Provisioned for new workspaces. |
+| Role people count, delete refused while assigned, permission changes audited with before/after | New/Working | E2E | |
+| Preview as role | New | Manual | Server-computed preview; navigation and buttons follow the role; data still uses the admin's access (stated in the banner). |
+| Platform Owner: disable, reactivate, remove company administrators | New | E2E | The last active admin cannot be disabled or removed. |
+
+## Page and widget builder
+
+| Feature | Status | Verified | Notes |
+|---|---|---|---|
+| Sections, rows/columns (12-col spans), tabs, drag-and-drop from palette and between columns, keyboard reordering | New | Manual | `app/ui/builder.tsx`. |
+| 22 widget types (heading, text, image, button, links, request form, table, list, KPI, chart, calendar, kanban, tickets, assets, people, approvals, files, search, report, AI answer, connector data) | New | E2E (data) + Manual | Controlled registry `app/widgets.ts`; no HTML/JS; links limited to `#/…` and https. |
+| Per-widget data source, filters, sorting, limit, role/department/location visibility, width, refresh interval, empty/error states | New | E2E | Server validates configs; unknown filters rejected. |
+| Draft, preview, publish, version history, compare, rollback, duplicate, save as template (platform templates owner-only), archive/restore/delete | New | E2E | Every save is an immutable version; stale saves refused (409). |
+| Widget data resolved server-side with the viewer's permissions | New | E2E | Cannot read another company's records. |
+| Home page customization (page address `home`) | New | Manual | Shown above the Home dashboard. |
+| Editing hard-coded module pages (Tickets, Assets…) with the builder | Deferred | — | Those pages are code; companies build custom pages and Home widgets instead. |
+
+## Connector Center
+
+| Feature | Status | Verified | Notes |
+|---|---|---|---|
+| Company and platform connector centers | New | E2E | Platform connectors: owner only, outside support sessions. |
+| Microsoft 365 / Entra / Outlook / Teams / SharePoint / OneDrive / Excel, Google Workspace / Gmail / Calendar / Drive (OAuth 2.0 + PKCE, refresh) | New (unverified) | — | Implemented but not exercised: needs real Microsoft/Google app registrations. |
+| Generic REST (API key / bearer / basic), OAuth 2.0 service, database/file-storage/custom HTTP APIs | New | E2E (REST) | |
+| Incoming webhooks with HMAC-SHA256 signatures and 5-minute replay window | New | E2E | |
+| MCP servers: discovery of tools/resources, allowed tools, read-only vs mutating, confirmation, timeouts, cancellation, tool-call logs | New | E2E (mock MCP) | Tools not declared read-only default to "changes data". |
+| Test, reconnect, disable/enable, rotate credentials, disconnect with typed confirmation, field mapping, page/role restrictions, logs, audit | New | E2E | |
+| Secrets encrypted at rest (AES-256-GCM, HKDF per workspace/platform, bound to record id) and never returned | New | E2E | Needs `SECRETS_KEY`. |
+| Scheduled sync | Deferred | — | Needs a Cron Trigger; "Sync now" and widget reads update the last sync time. |
+
+## AI
+
+| Feature | Status | Verified | Notes |
+|---|---|---|---|
+| Provider layer: Groq, OpenAI, Anthropic, Gemini, Azure OpenAI, OpenAI-compatible; chat, streaming, structured output, embeddings (where offered), tool calling (OpenAI-style), error normalization, usage, fallback policy | New | E2E (Groq-compatible mock, OpenAI-compatible mock) | Real provider APIs not called in tests. |
+| Groq default via `GROQ_API_KEY`; model set by the Platform Owner | New | E2E | Key never stored or sent to the browser. |
+| Company provider overrides Groq for that company only | New | E2E | |
+| Floating assistant: workspace badge, streaming, citations, history, suggested prompts, page-aware context, feedback, stop, retention, usage limits | New | E2E + Manual | Ctrl+J. |
+| Permission-aware retrieval (keyword search over live records with each module's visibility rules) | New | E2E | Minimum snippets; no whole tables. |
+| Vector embeddings / workspace vector namespaces | Deferred | — | Groq has no embeddings API and no vector index is bound; retrieval is keyword-based and workspace-scoped. |
+| AI actions on Home, Tickets, Assets, Purchasing, Spaces and the builder | New | E2E (triage, drafts, layout) | Suggestions are previews; applying uses the normal API after confirmation. |
+| AI activity log and usage (no prompt text stored in logs) | New | E2E | |
+
 ## Deferred / limitations
 
 - **Row-level security**: D1 (SQLite) has none; isolation is enforced centrally in the API layer and covered by tests.

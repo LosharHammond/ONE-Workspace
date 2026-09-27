@@ -11,5 +11,9 @@ declare namespace Cloudflare {
     // Optional transactional email (https://resend.com). Without it, notifications stay in-app.
     RESEND_API_KEY?: string;
     MAIL_FROM?: string;
+    // 32+ random characters; encrypts connector and AI provider secrets at rest.
+    SECRETS_KEY?: string;
+    // Development/testing only: point the platform Groq provider at an OpenAI-compatible endpoint.
+    AI_GROQ_BASE_URL?: string;
   }
 }

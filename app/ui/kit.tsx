@@ -7,8 +7,8 @@ import qrcode from 'qrcode-generator';
 // ── Session ─────────────────────────────────────────────────────────────────
 export type Person={id:string,name:string,email:string,department:string,title:string,role:string,roleId:string|null,location:string,active:number};
 export type Session={
- user:{id:string,name:string,email:string,role:string,roleId:string|null,department:string,title:string,location:string,platformRole:string|null,permissions:Record<string,Record<string,string>>,identityId:string,defaultScreen:string},
- tenant:{id:string,name:string,legalName:string,slug:string,brandColor:string,currency:string,timezone:string,domains:string,plan:string,status:string,settings:Record<string,any>,modules:string[]},
+ user:{id:string,name:string,email:string,role:string,roleId:string|null,department:string,title:string,location:string,platformRole:string|null,permissions:Record<string,Record<string,string>>,identityId:string,defaultScreen:string,rolePages?:string[]|null},
+ tenant:{id:string,name:string,legalName:string,slug:string,brandColor:string,currency:string,timezone:string,domains:string,plan:string,status:string,settings:Record<string,any>,modules:string[],pages?:string[]},
  support:{id:string,reason:string,startedAt:string,tenantName:string}|null,
  memberships:{id:string,tenantId:string,name:string,brandColor:string}[],
  people:Person[],departments:{id:string,name:string,code:string,headId:string|null,color:string,description:string,parentId?:string|null,costCentre?:string,status?:string}[],locations:{id:string,name:string,path:string,parentId:string|null,kind:string}[],roles:{id:string,name:string,base:string}[],

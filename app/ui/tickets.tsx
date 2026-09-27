@@ -2,6 +2,7 @@
 import {useMemo,useState} from 'react';
 import {api,useApi,go,ago,until,dateTime,cx} from './lib';
 import {useApp,Attachments,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Markdown,Thread,Timeline,Tabs,Segmented,ErrorNote,Skeleton,Empty,KV,type Col} from './kit';
+import {AiActions} from './assistant';
 import {ticketStatuses,ticketPriorities,ticketTypes} from '../data';
 
 type Ticket={id:string,number:string,title:string,excerpt:string,type:string,category:string,priority:string,status:string,department:string,assignee_id:string|null,requester_id:string,asset_id:string|null,location:string,due_at:string|null,resolved_at:string|null,created_at:string,updated_at:string,version:number,subcategory:string,impact:string,urgency:string,affected_user_id:string|null,approval_status:string,approver_id:string|null,escalated_at:string|null};
@@ -58,7 +59,7 @@ function TicketPanel({id,onClose,onChanged}:{id:string,onClose:()=>void,onChange
  const {ask}=useApp();const [approval,setApproval]=useState(false);
  async function escalate(){const reason=await ask({title:`Escalate ${t!.number}?`,body:'Raises the priority one level, shortens the response target and alerts the team lead.',confirm:'Escalate',input:{label:'Reason',required:true,multiline:true}});if(reason!==false)act({action:'escalate',reason},'Ticket escalated')}
  async function decide(decision:'Approved'|'Rejected'){const note=await ask({title:`${decision==='Approved'?'Approve':'Reject'} ${t!.number}?`,confirm:decision==='Approved'?'Approve':'Reject',danger:decision==='Rejected',input:{label:decision==='Approved'?'Comment (optional)':'Reason',required:decision==='Rejected',multiline:true}});if(note!==false)act({action:'approval-decision',decision,note},`Ticket ${decision.toLowerCase()}`)}
- return <Inspector open onClose={onClose} width={640} eyebrow={t?.number} title={t?.title||'Loading…'} subtitle={t&&<><Chip>{t.status}</Chip><Chip>{t.priority}</Chip><span className="muted small">{t.type} · opened {ago(t.created_at)}</span></>} actions={t&&(data.canWork||t.requester_id===s.user.id)&&<Btn size="sm" variant="ghost" icon="Pencil" title="Edit ticket" onClick={()=>setEditing(true)}/>}>
+ return <Inspector open onClose={onClose} width={640} eyebrow={t?.number} title={t?.title||'Loading…'} subtitle={t&&<><Chip>{t.status}</Chip><Chip>{t.priority}</Chip><span className="muted small">{t.type} · opened {ago(t.created_at)}</span></>} actions={t&&<><AiActions entity="ticket" entityId={t.id} onApply={{'ticket.update':async(d:{priority:string,category:string})=>{await api('/api/tickets',{action:'update',id:t.id,priority:d.priority,category:d.category});reload()},'ticket.comment':async(d:{reply:string})=>{await api('/api/comments',{type:'ticket',id:t.id,body:d.reply});reload()},'ticket.assign':async(d:{assigneeId:string|null})=>{if(!d.assigneeId)throw new Error('No valid person was suggested.');await api('/api/tickets',{action:'assign',id:t.id,assigneeId:d.assigneeId});reload()}}}/>{(data.canWork||t.requester_id===s.user.id)&&<Btn size="sm" variant="ghost" icon="Pencil" title="Edit ticket" onClick={()=>setEditing(true)}/>}</>}>
   <ErrorNote error={error} onRetry={reload}/>
   {!t?<Skeleton/>:<>
    <div className="action-strip">

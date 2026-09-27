@@ -2,6 +2,8 @@
 import {ResponsiveContainer,AreaChart,Area,BarChart,Bar,XAxis,YAxis,Tooltip,CartesianGrid,Legend} from 'recharts';
 import {useApi,money,compact,until,ago,dateOnly,go} from './lib';
 import {useApp,Btn,Chip,Card,Stat,Empty,Icon,Skeleton,ErrorNote,Who} from './kit';
+import {AiActions} from './assistant';
+import {HomeWidgets} from './builder';
 
 type Dash={focus:{approvals:any[],assigned:any[],requested:any[],myDocs:any[],myAssets:any[]},announcements:any[],pulse:Record<string,number|null>,charts:{ticketsByStatus:Record<string,number>,ticketsByPriority:Record<string,number>,assetsByStatus:Record<string,number>,assetsByCategory:Record<string,number>,ticketTrend:{week:string,opened:number,resolved:number}[],spend:{month:string,requested:number,ordered:number}[],spendByDepartment:[string,number][]}};
 
@@ -13,9 +15,11 @@ export default function Home(){
  const cur=s.tenant.currency;const first=s.user.name.split(' ')[0];
  const today=new Date().toLocaleDateString('en-GB',{weekday:'long',day:'numeric',month:'long'});
  return <div className="page home">
+  <HomeWidgets/>
   <section className="hero">
    <div><span className="eyebrow">{today}</span><h1>{greeting()}, {first}.</h1><p>{data?heroLine(data):'Gathering what needs you today…'}</p></div>
    <div className="hero-actions">
+    <AiActions only={['home.attention','home.trends','home.briefing']} label="AI briefing"/>
     {can('maintenance','create')&&<Btn icon="LifeBuoy" onClick={()=>go('tickets/new')}>Raise a ticket</Btn>}
     {can('requests','create')&&<Btn icon="ClipboardList" onClick={()=>go('purchasing/pr/new')}>Request a purchase</Btn>}
     {can('knowledge','create')&&<Btn icon="PenLine" onClick={()=>go('spaces/edit/new')}>Write a page</Btn>}

@@ -1,7 +1,8 @@
 // Role baselines offered when provisioning a workspace and when creating a role.
 // Each is an access level (base) plus explicit page permissions; anything not listed falls back to
 // the base level's baseline, and anything not granted there is denied.
-export type RoleTemplate={id:string,name:string,description:string,base:'admin'|'manager'|'employee'|'viewer',permissions:Record<string,Record<string,string>>};
+// pages: when set, the role sees only these pages (plus Home); every other page is denied.
+export type RoleTemplate={id:string,name:string,description:string,base:'admin'|'manager'|'employee'|'viewer',permissions:Record<string,Record<string,string>>,pages?:string[]};
 const all=(...actions:string[])=>Object.fromEntries(actions.map(a=>[a,'all']));
 export const roleTemplates:RoleTemplate[]=[
  {id:'company_admin',name:'Company Admin',description:'Full control of this workspace (not the platform).',base:'admin',permissions:{}},
@@ -13,4 +14,9 @@ export const roleTemplates:RoleTemplate[]=[
  {id:'asset_manager',name:'Asset Manager',description:'Registers, assigns, audits and disposes of assets.',base:'employee',permissions:{assets:all('view','create','update','assign','import','export'),locations:all('view','create','update'),schedules:all('view','create','update')}},
  {id:'storekeeper',name:'Storekeeper',description:'Receives, issues and counts stock.',base:'employee',permissions:{inventory:all('view','create','update','import','export'),receipts:all('view','create','export'),procurement:{view:'all'}}},
  {id:'viewer',name:'Viewer',description:'Read-only access to their department.',base:'viewer',permissions:{}},
+ // Department roles with an explicit page list (deny by default outside it).
+ {id:'it',name:'IT',description:'IT help desk, assets, maintenance, IT storage and files.',base:'employee',pages:['maintenance','assets','schedules','inventory','it','documents','knowledge','people','assistant'],permissions:{maintenance:all('view','create','update','assign'),assets:all('view','create','update','assign','export'),schedules:all('view','create','update','assign'),inventory:all('view','create','update'),it:all('view','create','manage_devices'),documents:{view:'department',create:'department',upload:'department',download:'department'},assistant:{view:'own',run_ai:'own'}}},
+ {id:'hr',name:'Human Resources',description:'People directory, locations, policies and announcements.',base:'employee',pages:['people','locations','knowledge','documents','assistant'],permissions:{people:all('view','create','update','export'),locations:all('view','create','update'),knowledge:{view:'all',create:'all',update:'all',publish:'all'},documents:{view:'department',create:'department',upload:'department',download:'department'},assistant:{view:'own',run_ai:'own'}}},
+ {id:'finance',name:'Finance',description:'Budgets, purchase orders, vendors and spend reports.',base:'employee',pages:['requests','procurement','suppliers','budgets','receipts','reports','documents','assistant'],permissions:{requests:all('view','approve','export'),procurement:all('view','approve','export'),suppliers:all('view','export'),budgets:all('view','create','update','export'),receipts:all('view','export'),reports:all('view','export'),documents:{view:'department',upload:'department',download:'department'},assistant:{view:'own',run_ai:'own'}}},
+ {id:'procurement',name:'Procurement',description:'Requisitions, orders, vendors, quotations and receiving.',base:'employee',pages:['requests','procurement','suppliers','receipts','budgets','inventory','documents','assistant'],permissions:{requests:all('view','update','export'),procurement:all('view','create','update','export'),suppliers:all('view','create','update','import','export'),receipts:all('view','create','export'),budgets:{view:'all'},inventory:all('view','create','update'),documents:{view:'department',upload:'department',download:'department'},assistant:{view:'own',run_ai:'own'}}},
 ];

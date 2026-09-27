@@ -2,6 +2,7 @@
 import {useEffect,useMemo,useState} from 'react';
 import {api,useApi,go,ago,dateOnly,hue,cx} from './lib';
 import {useApp,Btn,Chip,Header,Field,Who,Avatar,Markdown,Thread,ErrorNote,Skeleton,Empty,Icon,Segmented,Menu} from './kit';
+import {AiActions} from './assistant';
 import {pageKinds} from '../data';
 
 type Page={id:string,department:string,parent_id:string|null,kind:string,title:string,excerpt?:string,body?:string,icon:string,status:string,pinned:number,author_id:string,updated_by:string,created_at:string,updated_at:string,version:number};
@@ -60,7 +61,7 @@ function Reader({id}:{id:string}){
  if(!p)return <div className="page"><Skeleton rows={10}/></div>;
  const space=p.department?`#/spaces/d/${encodeURIComponent(p.department)}`:'#/spaces/d/company';
  return <div className="page reader">
-  <div className="doc-top"><a className="btn btn-ghost" href={space}><Icon name="ArrowLeft" size={17}/><span>{p.department||'Company'}</span></a><div className="grow"/>
+  <div className="doc-top"><a className="btn btn-ghost" href={space}><Icon name="ArrowLeft" size={17}/><span>{p.department||'Company'}</span></a><div className="grow"/><AiActions entity="page" entityId={p.id}/>
    {data.canPublish&&p.status!=='Published'&&<Btn variant="primary" icon="Send" onClick={()=>act({action:'status',status:'Published'},'Published')}>Publish</Btn>}
    {data.canEdit&&<Btn icon="Pencil" onClick={()=>go(`spaces/edit/${id}`)}>Edit</Btn>}
    {(data.canEdit||data.canPublish)&&<Menu trigger={o=><Btn variant="ghost" icon="Ellipsis" title="More" onClick={o}/>} items={[{label:'Move back to draft',icon:'Undo2',onClick:()=>act({action:'status',status:'Draft'},'Moved to draft'),hidden:!data.canPublish||p.status!=='Published'},{label:'Archive',icon:'Archive',onClick:()=>act({action:'status',status:'Archived'},'Archived'),hidden:!data.canPublish},{label:'Add a sub-page',icon:'FilePlus',onClick:()=>go(`spaces/edit/new/${p.department?encodeURIComponent(p.department):'company'}/${p.id}`)},{label:'Print',icon:'Printer',onClick:()=>window.print()},'-',{label:'Delete page',icon:'Trash2',danger:true,hidden:!data.canEdit,onClick:async()=>{if(await ask({title:`Delete “${p.title}”?`,confirm:'Delete',danger:true})===false)return;await api('/api/pages',{action:'delete',id});toast('Page deleted');location.hash=space}}]}/>}

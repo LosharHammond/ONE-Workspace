@@ -70,3 +70,6 @@ export async function readXlsx(file:File):Promise<string[][]>{
 }
 // Turns a sheet into objects using the first row that looks like a header.
 export function sheetObjects(rows:string[][],hint=/name|email/i){const hi=Math.max(0,rows.findIndex(r=>r.filter(c=>String(c).trim()).length>=2&&r.some(c=>hint.test(String(c)))));const header=rows[hi]||[];return rows.slice(hi+1).map(r=>Object.fromEntries(header.map((h,i)=>[String(h).trim(),String(r[i]??'').trim()]).filter(([h])=>h)))}
+
+// Session-storage key for an administrator's "Preview as role" (per tab).
+export const PREVIEW_KEY='ows-role-preview';

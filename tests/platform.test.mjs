@@ -8,7 +8,8 @@ import {beforeEach} from 'node:test';
 beforeEach(async()=>{if(pending.length){pending.length=0;await settle()}});
 
 const OWNER='losharhammond@gmail.com';
-const owner=new Client(),ownerPw=strongPassword();
+// The harness passes one owner password to every test file (setup runs once per test database).
+const owner=new Client(),ownerPw=process.env.OWS_OWNER_PW||strongPassword();
 const A={slug:'alpha-'+rand(),domain:`alpha${rand()}.test`,client:new Client(),pw:strongPassword()};
 const B={slug:'bravo-'+rand(),domain:`bravo${rand()}.test`,client:new Client(),pw:strongPassword()};
 const secrets=[];

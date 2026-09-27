@@ -2,7 +2,7 @@ import {env} from 'cloudflare:workers';
 import type {Member} from './policy';
 import type {Item} from '../data';
 import {roleRules,type AccessRule} from '../access-policy';
-import {disabledPages,modules as moduleCatalog} from '../modules';
+import {blockedPages,modules as moduleCatalog} from '../modules';
 
 export class HttpError extends Error{constructor(public status:number,message:string){super(message)}}
 export function db(){if(!env.DB)throw new HttpError(503,'Workspace database is unavailable. Please try again later.');return env.DB}
@@ -48,11 +48,16 @@ const memberColumns='m.id,m.name,m.email,m.role,m.department,m.active,m.tenant_i
 // Loads everything access decisions need for a member acting in a workspace.
 async function withAccess(u:Member){
  const t=await first<Tenant>('SELECT * FROM tenants WHERE id=?',u.tenantId);
- u.disabledPages=disabledPages(t?tenantSettings(t).modules:undefined);
+ u.disabledPages=blockedPages(t?tenantSettings(t):{});
+ // Pages the Platform Owner marked platform-only are refused in every workspace.
+ const catalog=await first<{value_json:string}>("SELECT value_json FROM platform_settings WHERE key='catalog'").catch(()=>null);
+ for(const [p,x] of Object.entries(parseJson<{pages?:Record<string,{platformOnly?:boolean}>}>(catalog?.value_json,{}).pages||{}))if(x.platformOnly&&!u.disabledPages.includes(p))u.disabledPages.push(p);
  const rules=await all<AccessRule>('SELECT * FROM access_rules WHERE tenant_id=?',u.tenantId);
  if(u.roleId&&u.role!=='admin'){
-  const role=await first<{id:string,permissions_json:string,locations_json:string,scope_json:string,vendor_access:number,assigned_only:number}>('SELECT id,permissions_json,locations_json,scope_json,vendor_access,assigned_only FROM roles WHERE id=? AND tenant_id=?',u.roleId,u.tenantId);
+  const role=await first<{id:string,permissions_json:string,locations_json:string,scope_json:string,vendor_access:number,assigned_only:number,pages_json:string|null}>('SELECT id,permissions_json,locations_json,scope_json,vendor_access,assigned_only,pages_json FROM roles WHERE id=? AND tenant_id=?',u.roleId,u.tenantId);
   if(role){
+   // A role with a page list sees only those pages (plus Home); anything else is denied.
+   u.rolePages=role.pages_json?parseJson<string[]>(role.pages_json,[]):null;
    rules.push(...roleRules(role.id,role.permissions_json));
    const scope=parseJson<{departments?:string[],locations?:string[],assetCategories?:string[],assetStatuses?:string[]}>(role.scope_json,{});
    u.locations=[...parseJson<string[]>(role.locations_json,[]),...(scope.locations||[])];

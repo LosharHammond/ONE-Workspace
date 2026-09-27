@@ -38,8 +38,12 @@ See [`docs/feature-matrix.md`](docs/feature-matrix.md) for the status of every f
 | `PLATFORM_SETUP_TOKEN` | Random secret (32+ characters) used once to set the Platform Owner's first password. Remove it afterwards. |
 | `RESEND_API_KEY`, `MAIL_FROM` | Email for invitations, resets and notifications. Without them, links are shown once in the UI and notifications stay in-app. |
 | `APP_ORIGIN` | Public origin used in links. |
-| `ASSEMBLYAI_API_KEY`, `GROQ_API_KEY` | Research transcription and summaries (optional). |
+| `GROQ_API_KEY` | The platform's default AI provider (assistant, AI actions, research summaries). Companies without their own provider use it. The Platform Owner picks the model in **Platform › Connectors & AI**. |
+| `SECRETS_KEY` | 32+ random characters. Encrypts connector credentials and company AI keys at rest (AES-256-GCM). Required before anyone can save a connector or AI key. Keep it stable: changing it makes stored secrets unreadable (re-enter them). |
+| `ASSEMBLYAI_API_KEY` | Research transcription (optional). |
 | `DATA_IMPORT_TOKEN` | One-time bulk import endpoint (optional). |
+
+`AI_GROQ_BASE_URL` exists only for local tests (it points the Groq default at a mock); never set it in production.
 
 Set secrets with `wrangler secret put` (production) or `.dev.vars` (local; git-ignored). Never put them in source files.
 
@@ -50,6 +54,15 @@ All schema changes are additive migrations in `drizzle/`; nothing is dropped or 
 - `0006_one_workspace.sql` — multi-tenancy; existing Procus data becomes the `procus` workspace.
 - `0007_platform_owner.sql` — the operator's own workspace ("One Workspace HQ") and the owner membership, **without a password**.
 - `0008_saas_platform.sql` — identities, credentials, one-time tokens, support sessions, platform audit, saved views, asset audits, inventory, maintenance, quotations, budgets, and new columns; backfills identities and credentials from existing members.
+- `0009_page_catalog_ai_connectors.sql` — `roles.pages_json` (role page lists), `platform_settings` (catalog overrides, packages, AI default), `ai_providers`, `ai_conversations`, `ai_messages`, `ai_usage`, `connectors`, `connector_logs`, `oauth_states`, `app_pages`, `app_page_versions`, `page_templates`. Additive only.
+
+## Pages, roles, AI and connectors
+
+- **Page catalog** (`app/page-catalog.ts`): every page has a stable id. The Platform Owner gives each company pages (or a package) in **Platform › Workspaces › Pages & modules** and edits packages, beta status, required plan and platform-only flags in **Platform › Page catalog**. A page a company lacks is hidden, blocked by direct link and refused by its API.
+- **Roles**: Company Admins limit each role to a subset of their company's pages (Admin › Roles & permissions › Pages), set actions and record scopes, and can **Preview as this role**.
+- **Page builder** (Pages app): drag-and-drop sections, rows, columns and tabs of approved widgets; draft → preview → publish, version history, compare, rollback, templates. A page with the address `home` appears on Home.
+- **Connector Center** (Admin › Connectors; Platform › Connectors & AI for global app registrations): REST, OAuth 2.0 (Microsoft, Google, generic), signed webhooks and MCP servers, restricted by page and role.
+- **AI**: Groq by default; a company can connect its own provider in Admin › AI settings. The floating assistant (Ctrl+J) and AI actions retrieve only what the person asking can open in the current workspace, cite sources, and never change data without a preview and confirmation.
 
 ## Platform Owner first sign-in
 
@@ -64,6 +77,8 @@ npx wrangler login
 D1_DATABASE_ID=<existing database_id> npm run build
 npm run db:migrate:remote        # applies only migrations not yet applied
 npx wrangler secret put PLATFORM_SETUP_TOKEN --config dist/server/wrangler.json   # first deploy only
+npx wrangler secret put SECRETS_KEY --config dist/server/wrangler.json            # once; keep it stable
+npx wrangler secret put GROQ_API_KEY --config dist/server/wrangler.json           # default AI provider
 npm run deploy
 ```
 

@@ -2,6 +2,7 @@
 import {useEffect,useMemo,useState} from 'react';
 import {api,useApi,go,money,dateOnly,dateTime,ago,cx} from './lib';
 import {KV,useApp,Btn,Chip,Header,Grid,Inspector,Modal,Field,DeptSelect,LocationInput,PersonSelect,Who,Thread,Timeline,Tabs,Segmented,ErrorNote,Skeleton,Empty,Card,Icon,Note,Avatar,Stat,type Col} from './kit';
+import {AiActions} from './assistant';
 
 type Doc={id:string,kind:'PR'|'PO',number:string,title:string,justification:string,department:string,location:string,requester_id:string,vendor_id:string|null,pr_id:string|null,needed_by:string|null,currency:string,subtotal:number,tax:number,total:number,status:string,terms:string,created_by:string,created_at:string,updated_at:string,submitted_at:string|null,version:number,pending_step?:string|null,awaitingMe?:boolean,involved?:boolean};
 type Line={inventory_item_id?:string|null,returned_qty?:number,id?:string,line_no?:number,description:string,item_code:string,qty:number,unit:string,unit_price:number,tax_rate:number,received_qty?:number};
@@ -69,7 +70,7 @@ function DocView({kind,id}:{kind:'PR'|'PO',id:string}){
  if(!d)return <div className="page"><Skeleton rows={10}/></div>;
  const back=`purchasing/${kind.toLowerCase()}`;
  return <div className="page doc-page">
-  <div className="doc-top no-print"><Btn variant="ghost" icon="ArrowLeft" onClick={()=>history.length>1?history.back():go(back)}>Back</Btn><div className="grow"/><Btn variant="ghost" icon="Printer" onClick={()=>window.print()}>Print</Btn></div>
+  <div className="doc-top no-print"><Btn variant="ghost" icon="ArrowLeft" onClick={()=>history.length>1?history.back():go(back)}>Back</Btn><div className="grow"/><AiActions entity="purchase" entityId={id}/><Btn variant="ghost" icon="Printer" onClick={()=>window.print()}>Print</Btn></div>
   <div className="doc-layout">
    <article className="paper">
     <header className="paper-head"><div><span className="paper-company">{s.tenant.legalName||s.tenant.name}</span>{s.tenant.settings.address&&<small>{s.tenant.settings.address}</small>}</div><div className="paper-id"><span>{kind==='PR'?'Purchase requisition':'Purchase order'}</span><b>{d.number}</b><Chip>{d.status}</Chip></div></header>

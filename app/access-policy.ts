@@ -4,7 +4,8 @@ export type Scope='none'|'own'|'department'|'all';
 export type AccessRule={id?:string,subject_type:string,subject_id:string,department:string,page:string,action:string,effect:string,scope:Scope};
 // disabledPages: pages of modules switched off for the workspace (always denied, even for admins).
 // extraDepartments: "selected departments" granted by a custom role; they count as the person's department.
-export type AccessUser={id:string,role:string,department:string,active:number,roleId?:string|null,rules?:AccessRule[],disabledPages?:string[],extraDepartments?:string[]};
+// rolePages: when a custom role lists its pages, every other page is denied (deny by default).
+export type AccessUser={id:string,role:string,department:string,active:number,roleId?:string|null,rules?:AccessRule[],disabledPages?:string[],extraDepartments?:string[],rolePages?:string[]|null};
 
 export const baseRoles=['admin','manager','employee','viewer'] as const;
 export const baseRoleLabels:Record<string,string>={admin:'Company Admin',manager:'Department Head',employee:'Standard User',viewer:'Viewer'};
@@ -30,8 +31,13 @@ export const pageActions:Record<string,string[]>={
  'company-data':['view'],
  audit:['view'],
  settings:['view','manage_members','configure'],
+ assistant:['view','run_ai'],
+ connectors:['view','configure','use_connectors'],
+ 'app-pages':['view','create','update','delete','publish'],
 };
-export const pageLabels:Record<string,string>={overview:'Home',schedules:'Schedules & maintenance',reports:'Reports',people:'People directory',knowledge:'Department spaces',locations:'Locations',assets:'Assets',maintenance:'Tickets',requests:'Purchase requisitions',procurement:'Purchase orders',suppliers:'Vendors',inventory:'Inventory',receipts:'Goods receipts',budgets:'Budgets',documents:'Files & documents',research:'Consumer research',it:'IT & CCTV storage','company-data':'Data hub',audit:'Activity log',settings:'Administration'};
+// Pages every role keeps (the home page); other pages must be on a strict role's page list.
+export const alwaysPages=['overview'];
+export const pageLabels:Record<string,string>={overview:'Home',schedules:'Schedules & maintenance',reports:'Reports',people:'People directory',knowledge:'Department spaces',locations:'Locations',assets:'Assets',maintenance:'Tickets',requests:'Purchase requisitions',procurement:'Purchase orders',suppliers:'Vendors',inventory:'Inventory',receipts:'Goods receipts',budgets:'Budgets',documents:'Files & documents',research:'Consumer research',it:'IT & CCTV storage','company-data':'Data hub',audit:'Activity log',settings:'Administration',assistant:'AI assistant',connectors:'Connectors','app-pages':'Custom pages'};
 
 export function departmentKey(value:string){const v=(value||'').toLowerCase().replace(/[^a-z0-9]/g,'');const groups:Record<string,string[]>={it:['it','itdepartment','informationtechnology','informationtechnologydepartment'],hr:['hr','hrandadmin','humanresource','humanresources','humanresourcemanagement','peopleculture','peopleandculture'],finance:['finance','accounting','accounts'],research:['consumerinsights','consumerinsightsresearch','consumerinsightsandresearch','consumerresearch','researchdevelopment','researchanddevelopment','rd'],warehouse:['warehouse','fgwarehouse','stores','store','itstore','unit4warehouse','shitowarehouse'],sales:['sales','salesdistribution','salesanddistribution','businessstrategistsales','export','businessstrategy'],quality:['quality','qualityassurance','microbiology'],production:['manufacturing','production','groundnut','shito','shitospices','spices','inprocess'],logistics:['logistics','supplychainlogistics','supplychainandlogistics'],procurement:['procurement','purchase','purchasing','purchasedepartment']};return Object.keys(groups).find(k=>groups[k].includes(v))||v}
 
@@ -44,6 +50,10 @@ export function defaultScope(u:AccessUser,page:string,action:string):Scope{
  if(!u.active||!baseRoles.includes(u.role as typeof baseRoles[number])||!pageActions[page]?.includes(action))return 'none';
  if(u.role==='admin')return 'all';
  if(['overview','settings'].includes(page)&&action==='view')return 'own';
+ // AI works only on what the person can already open, so everyone may use it for themselves.
+ if(page==='assistant')return 'own';
+ if(page==='connectors')return action==='use_connectors'&&u.role==='manager'?'department':'none';
+ if(page==='app-pages')return action==='view'?'all':'none';
  if(page==='settings'&&action==='manage_members')return u.role==='manager'?'department':'none';
  if(page==='audit')return u.role==='manager'?'department':'none';
  if(page==='company-data'||(page==='it'&&u.role==='viewer'))return 'none';
@@ -74,6 +84,7 @@ const rank=(r:AccessRule)=>r.subject_type==='user'?(r.department==='*'?40:45):r.
 
 export function actionScope(u:AccessUser,page:string,action:string):Scope{
  if(u.disabledPages?.includes(page))return 'none';
+ if(u.role!=='admin'&&u.rolePages&&!alwaysPages.includes(page)&&!u.rolePages.includes(page)&&!(page==='settings'&&action==='view'))return 'none';
  if(!u.active||!baseRoles.includes(u.role as typeof baseRoles[number])||!pageActions[page]?.includes(action))return 'none';
  if(u.role==='admin')return 'all';
  const candidates=(u.rules||[]).filter(r=>r.page===page&&r.action===action&&(r.department==='*'||departmentKey(r.department)===departmentKey(u.department))&&((r.subject_type==='user'&&r.subject_id===u.id)||(r.subject_type==='customrole'&&r.subject_id===u.roleId)||(r.subject_type==='role'&&r.subject_id===u.role)||(r.subject_type==='department'&&departmentKey(r.subject_id)===departmentKey(u.department))));
