@@ -71,6 +71,15 @@ export const POST=route(async(req,u)=>{
    for(const p of [...res.map((r:{path:string})=>r.path),...acts.map((a:{path:string})=>a.path)])if(!/^\/[\w\-./?=&%,:]*$/.test(p)||p.includes('..'))throw new HttpError(400,`“${p}” is not a valid relative path.`);
    const cfg={...configOf(c),resources:JSON.stringify(res),actions:JSON.stringify(acts)};await batch([stmt('UPDATE connectors SET config_json=?,updated_by=?,updated_at=? WHERE id=? AND tenant_id=?',JSON.stringify(cfg),u.name,now(),c.id,u.tenantId),auditStatement(u,'Connector resources and actions changed',c.id,'Integrations',null,{resources:res.length,actions:acts.length})]);return {ok:true};
   }
+  // Email or calendar items (and any synced record) can be marked for action: they enter the person's inbox.
+  case 'mark-for-action':{
+   if(!mayUse(u,c))throw new HttpError(403,'This connector is not available to you.');
+   const rec=await first<{id:string,title:string,body:string,url:string,kind:string,permissions_json:string}>('SELECT id,title,body,url,kind,permissions_json FROM connector_records WHERE id=? AND tenant_id=? AND connector_id=? AND deleted_at IS NULL',idOf(b.recordId,'External record'),u.tenantId,c.id);if(!rec)throw new HttpError(404,'External record not found.');
+   const perm=parseJson<{people?:string[]}>(rec.permissions_json,{});if(perm.people?.length&&!perm.people.includes(u.id))throw new HttpError(404,'External record not found.');
+   const ts=now();const due=typeof b.dueAt==='string'&&!Number.isNaN(Date.parse(b.dueAt))?new Date(b.dueAt).toISOString():null;
+   await batch([stmt("INSERT INTO inbox_items(id,tenant_id,recipient_id,dedupe_key,source_module,source_type,source_id,source_url,item_type,title,description,priority,status,due_at,actions_json,required_page,required_action,created_at,updated_at) VALUES(?,?,?,?,'connectors','external',?,?,?,?,?,?,'open',?,?,'connectors','view',?,?) ON CONFLICT(tenant_id,recipient_id,dedupe_key) DO UPDATE SET status='open',due_at=excluded.due_at,updated_at=excluded.updated_at",uid(),u.tenantId,u.id,`manual:external:${rec.id}`,rec.id,rec.url||`#/admin/connectors/${c.id}`,rec.kind==='email'?'message':'task',`${rec.kind==='email'?'Email':rec.kind==='event'?'Calendar':'Item'}: ${rec.title}`.slice(0,300),rec.body.slice(0,600),b.priority==='high'?'high':'normal',due,JSON.stringify(['open','complete','follow_up','snooze','reply']),ts,ts),auditStatement(u,'Connected item marked for action',rec.id,'Integrations',null,{connector:c.id,kind:rec.kind})]);
+   return {ok:true};
+  }
   case 'link-record':{
    // Connect a synced external record to a One Workspace record (lineage kept on the external node).
    if(!mayUse(u,c))throw new HttpError(403,'This connector is not available to you.');const rec=await first<{id:string,source_id:string,title:string}>('SELECT id,source_id,title FROM connector_records WHERE id=? AND tenant_id=? AND connector_id=? AND deleted_at IS NULL',idOf(b.recordId,'External record'),u.tenantId,c.id);if(!rec)throw new HttpError(404,'External record not found.');

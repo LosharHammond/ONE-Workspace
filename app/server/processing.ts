@@ -22,7 +22,7 @@ export function scan(name:string,bytes:Uint8Array):string|null{
  if(bin(bytes.subarray(0,Math.min(bytes.length,1<<20))).includes(EICAR))return 'Malware test signature (EICAR) detected.';
  if(head.startsWith('MZ')||head.startsWith('\x7fELF')||head.startsWith('\xcf\xfa\xed\xfe'))return 'Executable content is not allowed.';
  if(/^#!/.test(head)&&!['txt','md','csv'].includes(ext))return 'Script content is not allowed.';
- const magic:Record<string,(h:string)=>boolean>={pdf:h=>h.startsWith('%PDF'),png:h=>h.startsWith('\x89PNG'),jpg:h=>h.startsWith('\xff\xd8'),jpeg:h=>h.startsWith('\xff\xd8'),gif:h=>h.startsWith('GIF8'),docx:h=>h.startsWith('PK'),xlsx:h=>h.startsWith('PK'),pptx:h=>h.startsWith('PK'),zip:h=>h.startsWith('PK')};
+ const magic:Record<string,(h:string)=>boolean>={pdf:h=>h.startsWith('%PDF'),png:h=>h.startsWith('\x89PNG'),jpg:h=>h.startsWith('\xff\xd8'),jpeg:h=>h.startsWith('\xff\xd8'),gif:h=>h.startsWith('GIF8'),docx:h=>h.startsWith('PK')||h.startsWith('\xd0\xcf\x11\xe0'),xlsx:h=>h.startsWith('PK')||h.startsWith('\xd0\xcf\x11\xe0'),pptx:h=>h.startsWith('PK')||h.startsWith('\xd0\xcf\x11\xe0'),zip:h=>h.startsWith('PK')};
  if(magic[ext]&&!magic[ext](head))return `The file content does not match its .${ext} extension.`;
  return null;
 }
@@ -131,6 +131,10 @@ registerJob('file.process',async(job:JobRow,progress)=>{
  }
  if(f.bytes>MAX_EXTRACT){await setStatus(f,'unsupported','Documents over 20 MB are stored but not processed.');return}
  await setStatus(f,'extracting');await progress('extracting');
+ // Password-protected files are reported as such (never as empty or invented content).
+ const ext0=(f.name.split('.').pop()||'').toLowerCase();
+ if(ext0==='pdf'&&new TextDecoder('latin1').decode(buf.subarray(0,Math.min(buf.length,400000))).includes('/Encrypt')){await setStatus(f,'failed','Password-protected PDF: the content cannot be read until an unprotected copy is uploaded.');return}
+ if(['docx','xlsx','pptx'].includes(ext0)&&buf[0]===0xd0&&buf[1]===0xcf&&buf[2]===0x11&&buf[3]===0xe0){await setStatus(f,'failed','Password-protected Office file: the content cannot be read until an unprotected copy is uploaded.');return}
  const ex=await extract(f,buf);
  if(!ex||!ex.sections.length){await setStatus(f,'unsupported',f.mime.startsWith('image/')||f.mime==='application/pdf'?'No readable text. Scanned documents and images need OCR (Cloudflare Workers AI binding).':'This file type cannot be read as text.');return}
  await batch([artifact(f,'text',ex.sections.map(s=>`[${s.ref}] ${s.text}`).join('\n\n').slice(0,900000),{method:ex.method,sections:ex.sections.length})]);

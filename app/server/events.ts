@@ -23,11 +23,19 @@ export async function processEvents(limit=40,tenantId?:string){
    const payload=JSON.parse(e.payload_json||'{}') as Record<string,unknown>;
    let entityType=typeof payload.type==='string'?payload.type:null;
    if(e.type==='audit'||e.type==='project'){entityType=entityType||await resolveType(e.tenant_id,e.entity_id);if(entityType)await syncNode(e.tenant_id,entityType,e.entity_id)}
-   else if(e.entity_id&&entityType)await syncNode(e.tenant_id,entityType,e.entity_id);
+   else if(e.entity_id&&entityType&&e.type!=='inbox')await syncNode(e.tenant_id,entityType,e.entity_id);
    const deferred:string[]=[];
-   if(e.type!=='project'){
+   if(e.type!=='project'&&e.type!=='inbox'){
     const {onDomainEvent}=await import('./studio');const studio=await onDomainEvent(e,entityType,payload);if(studio.status==='deferred')deferred.push(studio.reason||'Studio consumer deferred.');
     const agents=await import('./agents');const agent=await agents.onDomainEvent(e,entityType);if(agent.status==='deferred')deferred.push(agent.reason||'Agent consumer deferred.');
+   }
+   if(e.type!=='project'){
+    // Universal Work Inbox projection (idempotent; a failure retries the event).
+    await (await import('./inbox')).onDomainEvent(e,entityType);
+    // Request-to-outcome lifecycle: linked records (orders, receipts, assets, services…) advance their request.
+    if(e.type==='audit')await (await import('./lifecycle')).onDomainEvent(e.tenant_id,entityType,e.entity_id);
+    // Knowledge intelligence: changed sources are (re)registered for processing.
+    if(e.type!=='inbox')await (await import('./knowledge-intel')).onDomainEvent(e,entityType);
    }
    await run("UPDATE domain_events SET status=?,processed_at=?,error=? WHERE id=?",deferred.length?'deferred':'done',now(),deferred.join('; ').slice(0,300),e.id);done++;
   }catch(err){

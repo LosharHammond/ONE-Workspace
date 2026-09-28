@@ -23,7 +23,10 @@ import WorkGraph from './graph';
 import Business,{businessViews} from './business';
 import Studio from './studio';
 import Agents,{AgentDock} from './agents';
-import Inbox from './inbox';
+import Inbox,{inboxViews,useInboxCounts} from './inbox';
+import Lifecycle,{lifecycleViews} from './lifecycle';
+import Strategy,{strategyViews} from './strategy';
+import Knowledge,{knowledgeViews} from './knowledge';
 import AppRuntime from './studio-runtime';
 import Pages from './builder';
 import {Assistant} from './assistant';
@@ -133,6 +136,7 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
  // Navigation follows the permission map from the server. Pages of switched-off modules come back as
  // "none" there, so the module disappears here and its API refuses requests.
  const owner=s.user.platformRole==='owner';
+ const inboxCounts=useInboxCounts();
  const apps:AppDef[]=[
   {id:'home',label:'Home',icon:'House',tone:'violet',show:true,views:[],render:p=>p[0]==='connections'&&s.tenant.modules.includes('integrations')?<ConnectorCenter scope="company" personal parts={p.slice(1)}/>:<Home/>},
   {id:'tickets',label:'Tickets',icon:'LifeBuoy',tone:'orange',show:can('maintenance'),views:[{id:'mine',label:'Assigned to me',icon:'UserCheck',count:s.counts.tickets},{id:'requested',label:'Raised by me',icon:'Send'},{id:'department',label:'My department',icon:'Building2'},{id:'queue',label:'Team queue',icon:'Inbox',hidden:!can('maintenance','update')},{id:'board',label:'Board',icon:'Kanban'},{id:'all',label:'All tickets',icon:'List'}],render:p=><Tickets parts={p}/>},
@@ -147,21 +151,24 @@ function Shell({s,refresh}:{s:Session,refresh:()=>Promise<void>}){
   {id:'spaces',label:'Spaces',icon:'LibraryBig',tone:'pink',show:can('knowledge'),views:[],render:p=><Spaces parts={p}/>},
   {id:'files',label:'Files',icon:'FolderClosed',tone:'amber',show:can('documents'),views:[],render:p=><Files parts={p}/>},
   {id:'reports',label:'Reports',icon:'ChartColumn',tone:'blue',show:can('reports'),views:[],render:p=><Reports parts={p}/>},
-  {id:'business',label:'Goals & customers',icon:'Target',tone:'violet',show:can('business'),views:businessViews,render:p=><Business parts={p}/>},
+  {id:'business',label:'Customers & governance',icon:'Handshake',tone:'violet',show:can('business'),views:businessViews,render:p=><Business parts={p}/>},
+  {id:'strategy',label:'Goals & strategy',icon:'Target',tone:'violet',show:can('strategy'),views:strategyViews,render:p=><Strategy parts={p}/>},
+  {id:'lifecycle',label:'Requests',icon:'Route',tone:'green',show:can('lifecycle'),views:lifecycleViews,render:p=><Lifecycle parts={p}/>},
+  {id:'knowledge',label:'Knowledge',icon:'Brain',tone:'pink',show:can('knowledge')||can('documents'),views:knowledgeViews,render:p=><Knowledge parts={p}/>},
   {id:'graph',label:'Work Graph',icon:'Network',tone:'violet',show:can('graph'),views:[],render:()=> <WorkGraph/>},
   {id:'studio',label:'Workspace Studio',icon:'PanelsTopLeft',tone:'violet',show:can('studio')&&(admin||can('studio','configure')),views:[{id:'apps',label:'Apps',icon:'AppWindow'},{id:'data',label:'Data',icon:'Database',section:'Build'},{id:'forms',label:'Forms',icon:'ClipboardPen',section:'Build'},{id:'workflows',label:'Workflows',icon:'Workflow',section:'Build'},{id:'automations',label:'Automations',icon:'Zap',section:'Build'},{id:'reports',label:'Reports',icon:'ChartPie',section:'Build'},{id:'pages',label:'Pages',icon:'LayoutGrid',section:'Build'},{id:'widgets',label:'Widgets',icon:'Puzzle',section:'Library'},{id:'templates',label:'Templates',icon:'LayoutTemplate',section:'Library'},{id:'extensions',label:'Custom fields',icon:'Blocks',section:'Library'},{id:'approvals',label:'App approvals',icon:'Stamp',section:'Operate'},{id:'usage',label:'Usage',icon:'Gauge',section:'Operate'},{id:'published',label:'Published apps',icon:'Rocket',section:'Operate'}],render:p=> <Studio parts={p}/>},
   {id:'apps',label:'Apps',icon:'AppWindow',tone:'violet',show:can('studio'),views:[],render:p=> <AppRuntime parts={p}/>},
-  {id:'inbox',label:'Inbox',icon:'Inbox',tone:'violet',show:true,views:[],render:p=> <Inbox parts={p}/>},
+  {id:'inbox',label:'Inbox',icon:'Inbox',tone:'violet',show:true,views:inboxViews.map(v=>({...v,count:v.id==='attention'?inboxCounts?.unread:v.id==='approvals'?inboxCounts?.approvals:v.id==='overdue'?inboxCounts?.overdue:undefined})),render:p=> <Inbox parts={p}/>},
   {id:'agents',label:'AI workforce',icon:'Bot',tone:'violet',show:can('agents'),views:[],render:p=> <Agents parts={p}/>},
   {id:'pages',label:'Pages',icon:'LayoutGrid',tone:'violet',show:can('app-pages'),views:[],render:p=><Pages parts={p}/>},
   {id:'ops',label:'Operations',icon:'Factory',tone:'slate',show:['it','research'].some(p=>can(p))||(can('receipts')&&admin),views:[{id:'it',label:'IT & CCTV storage',icon:'HardDrive',hidden:!can('it')},{id:'research',label:'Consumer research',icon:'FlaskConical',hidden:!can('research')},{id:'inventory',label:'Imported stock register',icon:'Package',hidden:!can('inventory'),section:'Imported registers'},{id:'receipts',label:'Imported receipts',icon:'Truck',hidden:!can('receipts'),section:'Imported registers'},{id:'budgets',label:'Imported budgets',icon:'PiggyBank',hidden:!can('budgets'),section:'Imported registers'}],render:p=><Operations parts={p}/>},
-  {id:'admin',label:'Admin',icon:'Settings2',tone:'gray',show:admin||can('audit'),views:[{id:'company',label:'Company settings',icon:'Building',hidden:!admin},{id:'lists',label:'Lists',icon:'ListChecks',hidden:!admin&&!can('settings','configure')},{id:'groups',label:'Groups',icon:'UsersRound',hidden:!admin&&!can('settings','configure')},{id:'roles',label:'Roles & permissions',icon:'ShieldCheck',hidden:!admin},{id:'overrides',label:'Access overrides',icon:'KeyRound',hidden:!admin},{id:'data',label:'Data hub',icon:'DatabaseZap',hidden:!can('company-data')},{id:'activity',label:'Activity log',icon:'History',hidden:!can('audit')},{id:'security',label:'Security log',icon:'ShieldAlert',hidden:!admin},{id:'connectors',label:'Connectors',icon:'Link',hidden:!(admin&&s.tenant.modules.includes('integrations'))&&!can('connectors','configure'),section:'Integrations'},{id:'ai',label:'AI Control Tower',icon:'RadioTower',hidden:!admin,section:'Integrations'}],render:p=><Admin parts={p}/>},
+  {id:'admin',label:'Admin',icon:'Settings2',tone:'gray',show:admin||can('audit'),views:[{id:'company',label:'Company settings',icon:'Building',hidden:!admin},{id:'lists',label:'Lists',icon:'ListChecks',hidden:!admin&&!can('settings','configure')},{id:'groups',label:'Groups',icon:'UsersRound',hidden:!admin&&!can('settings','configure')},{id:'roles',label:'Roles & permissions',icon:'ShieldCheck',hidden:!admin},{id:'overrides',label:'Access overrides',icon:'KeyRound',hidden:!admin},{id:'data',label:'Data hub',icon:'DatabaseZap',hidden:!can('company-data')},{id:'activity',label:'Activity log',icon:'History',hidden:!can('audit')},{id:'security',label:'Security log',icon:'ShieldAlert',hidden:!admin},{id:'connectors',label:'Connectors',icon:'Link',hidden:!(admin&&s.tenant.modules.includes('integrations'))&&!can('connectors','configure'),section:'Integrations'},{id:'ai',label:'AI Control Tower',icon:'RadioTower',hidden:!admin,section:'Integrations'},{id:'knowledge',label:'Knowledge',icon:'Brain',hidden:!admin,section:'Knowledge & inbox'},{id:'inbox-rules',label:'Inbox rules',icon:'Inbox',hidden:!admin,section:'Knowledge & inbox'}],render:p=><Admin parts={p}/>},
   // The Platform app exists only for the Platform Owner and is separate from company administration.
   {id:'platform',label:'Platform',icon:'Globe',tone:'red',show:owner&&!preview,views:[{id:'workspaces',label:'Workspaces',icon:'Building'},{id:'catalog',label:'Page catalog',icon:'LayoutGrid'},{id:'connectors',label:'Connectors & AI',icon:'Link'},{id:'os',label:'Operating system',icon:'Cpu'},{id:'audit',label:'Platform audit',icon:'ScrollText'}],render:p=><Platform parts={p}/>},
  ];
  const visibleApps=apps.filter(a=>a.show);
  const dockGroups=[
-  {id:'work',label:'Work',icon:'LayoutGrid',apps:['inbox','projects','tasks','business','messages','spaces','files','pages','apps','studio','graph']},
+  {id:'work',label:'Work',icon:'LayoutGrid',apps:['inbox','strategy','projects','tasks','lifecycle','knowledge','business','messages','spaces','files','pages','apps','studio','graph']},
   {id:'operations',label:'Operations',icon:'Factory',apps:['tickets','purchasing','assets','inventory','maintenance','ops']},
   {id:'people',label:'People & admin',icon:'UsersRound',apps:['people','admin','agents','platform']},
  ];

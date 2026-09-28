@@ -31,7 +31,7 @@ export async function outbound(c:ConnectorRow,url:string,init:RequestInit&{timeo
  if(!r){const timeout=(err as Error)?.name==='TimeoutError';throw new HttpError(504,timeout?`${c.name} did not answer in time.`:signal?.aborted?'Cancelled.':`Could not reach ${c.name}.`)}
  return r;
 }
-export async function markHealth(c:ConnectorRow,ok:boolean,error=''){await run('UPDATE connectors SET health=?,last_error=?,last_ok_at=CASE WHEN ? THEN ? ELSE last_ok_at END,status=CASE WHEN status=\'disabled\' THEN status WHEN ? THEN \'connected\' ELSE \'error\' END WHERE id=? AND tenant_id=?',ok?'healthy':'failing',error.slice(0,300),ok?1:0,now(),ok?1:0,c.id,c.tenant_id)}
+export async function markHealth(c:ConnectorRow,ok:boolean,error=''){await run('UPDATE connectors SET health=?,last_error=?,last_ok_at=CASE WHEN ? THEN ? ELSE last_ok_at END,status=CASE WHEN status=\'disabled\' THEN status WHEN ? THEN \'connected\' ELSE \'error\' END WHERE id=? AND tenant_id=?',ok?'healthy':'failing',error.slice(0,300),ok?1:0,now(),ok?1:0,c.id,c.tenant_id);await stmt("INSERT INTO domain_events(id,tenant_id,type,entity_id,action,actor,payload_json,status,attempts,error,created_at) VALUES(?,?,'inbox',?,'inbox sync','system',?,'pending',0,'',?)",uid(),c.tenant_id,c.id,JSON.stringify({type:'connector'}),now()).run().catch(()=>{})}
 
 // ── Authentication headers ──
 export async function oauthApp(c:ConnectorRow,t:ConnectorType){

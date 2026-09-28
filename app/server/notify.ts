@@ -15,6 +15,8 @@ export async function notify(actor:{id:string,tenantId:string},recipients:(strin
  const rows=people.map(p=>({id:uid(),p,email:mail&&p.notify_email&&/\S+@\S+/.test(p.email)}));
  if(!rows.length)return;
  await batch(rows.map(r=>stmt('INSERT INTO notifications(id,tenant_id,member_id,kind,title,body,link,email_status,created_at) VALUES(?,?,?,?,?,?,?,?,?)',r.id,actor.tenantId,r.p.id,n.kind,n.title.slice(0,200),(n.body||'').slice(0,1000),n.link||'',r.email?'queued':'none',now())));
+ // Mentions, messages, comments and status alerts also appear in the Universal Work Inbox.
+ await (await import('./inbox')).fromNotifications(actor.tenantId,rows.map(r=>({id:r.id,memberId:r.p.id,kind:n.kind,title:n.title,body:n.body||'',link:n.link||''}))).catch(()=>{});
  const toSend=rows.filter(r=>r.email);
  if(!toSend.length)return;
  let base='';try{base=origin(req)}catch{}

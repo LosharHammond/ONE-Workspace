@@ -22,6 +22,8 @@ export const modules:ModuleDef[]=[
  {id:'tasks',label:'Tasks',description:'Task planner.',pages:['tasks']},
  {id:'messages',label:'Messages',description:'Company messaging.',pages:['messages']},
  {id:'business',label:'Goals & customers',description:'Strategy, customers, contracts, services, meetings and decisions.',pages:['business']},
+ {id:'lifecycle',label:'Requests & outcomes',description:'Business requests through approval, procurement, assets, services and outcome reviews.',pages:['lifecycle']},
+ {id:'strategy',label:'Strategy & goals',description:'Objectives, key results, initiatives, programmes, portfolio, check-ins and scenarios.',pages:['strategy']},
  {id:'graph',label:'Work Graph',description:'Relationships across every module.',pages:['graph']},
  {id:'studio',label:'Workspace Studio',description:'No-code apps, workflows and automations.',pages:['studio']},
  {id:'agents',label:'AI workforce',description:'Governed AI agents and the Control Tower.',pages:['agents']},

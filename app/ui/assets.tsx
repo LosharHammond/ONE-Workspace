@@ -7,6 +7,7 @@ import {BarList} from './home';
 import {ImportGeneric} from './people';
 import {assetStatuses,assetConditions,assetKinds,bookValue} from '../data';
 import {ConnectedContext} from './context';
+import {AssetLineageView,type AssetLineage} from './lifecycle';
 import {CustomFields} from './studio-runtime';
 import {ConnectedApps} from './fabric';
 
@@ -81,7 +82,8 @@ function AssetPanel({id,onClose,onChanged}:{id:string,onClose:()=>void,onChanged
    <div className="assign-card"><div><span className="eyebrow">Custody</span>{a.assigned_to?<><Who id={a.assigned_to} sub/>{a.due_back&&<small className={Date.parse(a.due_back)<Date.now()?'text-red':'muted'}>Due back {dateOnly(a.due_back)}</small>}</>:<span className="muted">In store · {a.location||'no location'}</span>}</div>{data.canAssign&&<div className="row-gap">{a.assigned_to&&<Btn size="sm" icon="Undo2" onClick={checkin}>Check in</Btn>}<Btn size="sm" variant="primary" icon="ArrowRightLeft" onClick={()=>setDialog('checkout')}>{a.assigned_to?'Reassign':'Check out'}</Btn></div>}</div>}
    <div className="asset-top"><KV items={[['Location',a.location],['Department',a.department],['Cost centre',a.cost_centre],['Brand / model',[a.brand,a.model].filter(Boolean).join(' ')],['Serial number',a.serial&&<span key="s" className="mono">{a.serial}</span>],['Condition',a.condition],['Purchased',a.purchase_date&&dateOnly(a.purchase_date)],['Cost',a.purchase_cost?money(a.purchase_cost,s.tenant.currency):''],['Book value',a.useful_life_months?`${money(book,s.tenant.currency)} (${a.useful_life_months} months, straight line)`:''],['Vendor',a.vendor],['Warranty until',a.warranty_until&&dateOnly(a.warranty_until)],['Last updated',ago(a.updated_at)]]}/><button className="qr-mini" title="Print label" onClick={()=>setDialog('label')}><QRCode value={a.barcode||a.code} size={92}/><small className="mono">{a.barcode||a.code}</small></button></div>
    {a.notes&&<div className="prose-box"><p>{a.notes}</p></div>}
-   <Tabs value={tab} onChange={setTab} items={[{id:'history',label:'History'},{id:'maintenance',label:'Maintenance',count:data.workOrders.length+data.tickets.length},{id:'context',label:'Related context'},{id:'files',label:'Photos & files',count:data.files.length},{id:'comments',label:'Comments',count:data.comments.length}]}/>
+   <Tabs value={tab} onChange={setTab} items={[{id:'lineage',label:'Lineage'},{id:'history',label:'History'},{id:'maintenance',label:'Maintenance',count:data.workOrders.length+data.tickets.length},{id:'context',label:'Related context'},{id:'files',label:'Photos & files',count:data.files.length},{id:'comments',label:'Comments',count:data.comments.length}]}/>
+   {tab==='lineage'&&<AssetLineagePanel id={a.id}/>}
    {tab==='history'&&<Timeline events={data.history}/>}
    {tab==='maintenance'&&(data.workOrders.length||data.tickets.length?<div className="mini-list">{data.workOrders.map((w:any)=><a key={w.id} href={`#/maintenance/orders/${w.id}`}><span className="mono">{w.number}</span><span>{w.title}<small>{w.completedAt?`Completed ${dateOnly(w.completedAt)}`:`Due ${dateOnly(w.dueAt)}`}{w.cost?` · ${money(w.cost,s.tenant.currency)}`:''}</small></span><Chip>{w.status}</Chip></a>)}{data.tickets.map((t:any)=><a key={t.id} href={`#/tickets/all/${t.id}`}><span className="mono">{t.number}</span><span>{t.title}</span><Chip>{t.status}</Chip></a>)}</div>:<p className="muted small">No work orders or tickets for this asset.</p>)}
    {tab==='context'&&<><CustomFields type="asset" id={a.id}/><ConnectedApps type="asset" id={a.id}/><ConnectedContext type="asset" id={a.id} title="Purchase, custody and maintenance chain"/></>}
@@ -173,4 +175,11 @@ function AuditRun({id}:{id:string}){
   <div className="filter-row"><div className="grid-search big"><Icon name="ScanLine" size={17}/><input autoFocus placeholder="Scan or type an asset code" value={q} onChange={e=>setQ(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&open){const hit=data.assets.find(a=>a.code.toLowerCase()===q.trim().toLowerCase());if(hit){mark(hit.id,'Found');setQ('');toast(`${hit.code} found`)}}}}/></div></div>
   <div className="audit-list">{list.map(a=>{const r=result(a.id);return <div key={a.id} className={cx('audit-row',r&&`res-${r.toLowerCase().replace(' ','-')}`)}><span className="mono">{a.code}</span><span className="grow">{a.name}<small className="muted"> {a.location}</small></span>{r&&<Chip tone={r==='Found'?'green':r==='Missing'?'red':'amber'}>{r}</Chip>}{open&&<div className="row-gap">{['Found','Missing','Damaged','Wrong location'].map(x=><Btn key={x} size="sm" variant={r===x?'subtle':'ghost'} onClick={()=>mark(a.id,x)}>{x}</Btn>)}</div>}</div>})}{!list.length&&<Empty icon="Boxes" title="No matching assets"/>}</div>
  </div>;
+}
+
+// Why the asset exists and what it has cost: request, budget, approvals, order, receipt, custody, tickets,
+// maintenance, warranty and a replacement recommendation computed from recorded figures only.
+function AssetLineagePanel({id}:{id:string}){
+ const {data,error,reload}=useApi<AssetLineage>(`/api/lifecycle?view=asset&recordId=${id}`);
+ if(error)return <ErrorNote error={error} onRetry={reload}/>;if(!data)return <Skeleton rows={4}/>;return <AssetLineageView a={data}/>;
 }

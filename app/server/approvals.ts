@@ -74,10 +74,13 @@ export async function decide(u:Member,doc:Doc,decision:'approve'|'reject',commen
  if(!current)throw new HttpError(409,'This document is not awaiting approval.');
  if(doc.requester_id===u.id)throw new HttpError(403,'You cannot approve your own document.');
  const approvers=JSON.parse(current.approver_ids) as string[];
- const override=!approvers.includes(u.id);
+ let override=!approvers.includes(u.id);let onBehalf:string[]=[];
+ // A delegate (dates, module, amount and role checked by the delegation policy) decides under their own name.
+ if(override){const {actingFor}=await import('./delegation');onBehalf=await actingFor(u,approvers,doc.kind==='PO'?'procurement':'purchasing',{itemType:'approval',amount:doc.total,source:{type:doc.kind,id:doc.id}});if(onBehalf.length)override=false}
  if(override&&u.role!=='admin')throw new HttpError(403,`This step is assigned to another approver (${current.step_name}).`);
  if(decision==='reject'&&!comment)throw new HttpError(400,'Add a reason when rejecting.');
- const t=now(),note=(override?'[Administrator override] ':'')+comment;
+ const behalf=onBehalf.length?(await all<{name:string}>(`SELECT name FROM members WHERE tenant_id=? AND id IN (${onBehalf.map(()=>'?').join(',')})`,u.tenantId,...onBehalf)).map(m=>m.name).join(', '):'';
+ const t=now(),note=(override?'[Administrator override] ':behalf?`[On behalf of ${behalf} (delegation)] `:'')+comment;
  const next=steps.find(s=>s.step_no>current.step_no&&s.status==='Waiting');
  const finalStatus=decision==='reject'?'Rejected':next?null:'Approved';
  const res=await batch([

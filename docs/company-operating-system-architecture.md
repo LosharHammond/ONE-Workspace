@@ -1,6 +1,15 @@
 # One Workspace company operating system architecture
 
-Status: implementation audit and target architecture, updated 2026-09-27. This document distinguishes deployed code from planned interfaces; it is not a certification that the full mission in the supplied brief is complete.
+Status: implementation audit and target architecture, updated 2026-09-28 with capabilities 5–8 (Universal Work Inbox, Request-to-Outcome lifecycle, Goals-to-Execution, Company Knowledge Intelligence). This document distinguishes deployed code from planned interfaces. It is not a certification of production readiness.
+
+Latest verification on 2026-09-28 (isolated test database, local mocks for AI and connectors):
+
+- e2e: platform 12/12, SaaS 24/24, collaboration 20/20, operating system 24/24, capabilities 5–8 21/21;
+- unit tests 6/6;
+- typecheck clean;
+- lint 0 errors (304 warnings, none in the new capability files).
+
+Migration 0016 was upgrade-tested on a copy of existing data.
 
 ## Current architecture
 
@@ -60,6 +69,108 @@ Target agent runs must snapshot an immutable agent version and an explicit reque
 
 The target contract makes mode explicit per installed connector: (1) synced, with incremental/full synchronization, checkpoint, source ACL mapping, deletion propagation and lineage; (2) federated, with live source checks, explicit no-index behavior and citations; and (3) action, with validated declared operations, remote idempotency, approval, result verification and recovery guidance. The current MCP proposal supports a local one-dispatch guard, not a remote idempotency guarantee; remote outcome verification and safe recovery are still required. Reference provider coverage and permissions must be documented per operation. Do not claim a provider supports an operation solely because OAuth or an MCP tool can connect.
 
+## Capabilities 5–8 (migration 0016, 2026-09-28)
+
+Migration `0016_request_to_outcome.sql` is forward-only (35 tables, new nullable columns, two ledger triggers, and data fixes that only fill new columns). It was applied to a copy of the development database holding existing tenants, members, purchase documents, assets, projects and files; row counts were identical before and after.
+
+### 5. Universal Work Inbox
+
+- **Projection, not a copy of authority.** `app/server/inbox.ts` holds one adapter per source type (PR/PO, task, ticket, project stage, project record, work order, page acknowledgement, Studio record approval, AI approval, connector action and health, automation failure, invoice exception, vendor, stock, maintenance plan, contract renewal, decision review, check-in, business request, lifecycle stage, service delivery, outcome review, knowledge review, question, AI suggestion). Each adapter computes the desired items for a source record; `syncSource` upserts on `(tenant, recipient, dedupe_key)` and closes items that no longer apply. Notifications (mentions, messages, comments, alerts) become informational items.
+- **Delivery.** The domain-event consumer calls `inbox.onDomainEvent`. Sources that do not write audit rows emit `inbox` events. Background jobs: `inbox.rebuild`, `inbox.sync`, and the hourly `inbox.sweep`, which runs SLA escalation, reminders, retention and a 06:00 UTC digest.
+- **Read-time authorisation.** Every listed item is re-checked against its source through Work Graph `visibleNodes` or the module's own rule. Delegated items are also checked against an active delegation. Counts use the same filtered set, so hidden work never affects a number.
+- **Actions go through the source module.** Approve, reject, request changes, complete, acknowledge, assign, delegate, escalate, comment, follow up and retry are dispatched to the owning module's POST handler (`app/server/dispatch.ts`) with the caller's own session. Before dispatch, an optimistic version check compares the source version the user saw with the current one; after dispatch the item is re-projected and the action is audited. Read, snooze, remind and dismiss are personal and never change the source.
+- **Delegation** (`app/server/delegation.ts`):
+  - date-bounded, and the end must be in the future;
+  - scoped by module, item type or a single record;
+  - no chains and no circular delegation;
+  - company policy (switch, maximum days) is read from `inbox_rules`;
+  - `actingFor` is honoured by purchasing, Studio, lifecycle, decision and knowledge-review approvals, and records "on behalf of" in the audit;
+  - a requester still cannot approve their own request through a delegation.
+- **AI** (`ai-prioritize`, `ai-draft`) ranks only the viewer's authorised items and drops any id the model invents. Each item carries its rule-based evidence. The AI never acts: the response states that nothing was approved, sent or changed, and drafts are returned for the user to edit.
+
+### 6. Request-to-Outcome lifecycle
+
+- **Templates and requests.** `lifecycle_templates` holds versioned stage definitions (8 built-in: physical project, service delivery, IT project, procurement, asset acquisition, maintenance, internal improvement, custom). Each request copies its template's stages, so editing a template never changes requests already in flight.
+- **Stage kinds.** Intake, business case, review, approval, goal, project, budget, requisition, RFQ, quotations, evaluation, order, receipt, asset, deployment, service, measurement, outcome and closure. Automatic stages complete when their linked record reaches the required state (`evaluate`, re-run from domain events).
+- **Approval gates:**
+  - any / all / quorum modes, with conditional steps;
+  - a finance step above a threshold;
+  - request changes (returns the stage) and reject;
+  - delegation-aware decisions;
+  - the requester can never approve.
+- **Business case figures** (total cost, net benefit, ROI, payback) are computed only from entered cost lines and annual benefit. Each figure shows its formula and lists missing inputs; nothing is estimated.
+- **Linked records are created by their owning modules** through dispatch: project, budget and requisition. Services, benefits and measurements, and outcome reviews (expected vs actual, ledger result, follow-up tasks, key-result lineage) are also supported.
+- **Purchasing additions:**
+  - partial conversion of a PR into several POs (`ordered_qty` per line);
+  - change orders, where increases go back through approval;
+  - vendor invoices with a three-way match against the tenant tolerance (`invoiceTolerancePct`, default 2 %), with exceptions routed to the inbox;
+  - exception approval and payment recording (no money is moved);
+  - per-unit asset details on receipt (serial, custodian, location, warranty, maintenance plan) and service acceptance.
+- **Traceability.** `trace` walks from a request to every connected record, each filtered through Work Graph permissions (hidden records are only counted). `rootOf` starts from any asset, PO, PR, project, budget or service. `assetLineage` answers:
+  - why the asset was bought;
+  - funding and approvers;
+  - vendor and PO, and who received it;
+  - custodian and location;
+  - tickets and maintenance;
+  - warranty days left;
+  - lifetime cost;
+  - a replacement recommendation with its stated reasons.
+
+### Financial traceability model
+
+`financial_events` is an append-only ledger; UPDATE and DELETE triggers abort. `app/server/finance.ts` reconciles each source into signed deltas per (source, measure, project, budget, request, line, currency), so re-running a reconcile is idempotent and corrections are new rows.
+
+- **Measures:** proposed, budget, contingency, requested, committed, ordered, received, invoiced, paid, expense and forecast adjustment.
+- **Derived figures:** actual = received + expenses + labour; forecast = actual + committed + adjustments.
+- **No double counting.** A requisition counts once as *requested*. Its POs count as *ordered*; the unreceived part of an order counts as *committed*. A document linked through both a project and a request is still one source. `measureSources` lists the records behind any figure. `projectFinance` in collaboration now reads from the ledger with the same output shape.
+
+### 7. Goals-to-Execution
+
+- **Hierarchy.** Strategy records are Work records of kinds strategy, theme, goal, objective, key result, initiative and programme. They support multiple parents, versions (`work_record_versions`), publication and acknowledgement. Projects, milestones and tasks attach through initiative `projects` references.
+- **Visibility** adds leadership, groups, confidential and partner audiences (`acl_json`), enforced in `canSeeWork`. It therefore applies to the tree, item pages, rollups (hidden contributors are counted as missing), review packs (re-filtered for the reader), the Work Graph, knowledge search and agent tools.
+- **Rollups** (`app/server/strategy.ts`) return:
+  - progress, the calculation method and the source records with weights;
+  - missing data;
+  - any manual override with its reason;
+  - confidence, health and the health basis;
+  - last-updated time.
+
+  Key results take values manually or from project, purchasing (ledger), asset, report, Studio and connector sources, read with the owner's permissions. Every value is stored in `progress_updates` with its lineage. AI recommendations stay drafts until the owner accepts them.
+- **Check-ins, review packs and planning:**
+  - AI-drafted check-ins cite authorised evidence and remain drafts;
+  - review packs: weekly, monthly, QBR, executive and department;
+  - portfolio filters and views;
+  - privacy-aware capacity.
+- **Scenarios** are private drafts. They move to submitted, then approved by another planner or an administrator, then applied. Applying uses dispatch to the owning modules, and evaluation never writes to live records.
+
+### 8. Company Knowledge Intelligence
+
+- **Sources and pipeline.** `knowledge_sources` registers files, pages, projects, tasks, tickets, messages, work records (meetings, decisions, contracts, strategy), purchase documents, assets, requests, Studio records and connector records. The `knowledge.process` job moves each through security scan, extracting, OCR/transcribing, classifying, summarizing, embedding and indexing, ending ready, partial, failed, retrying, unsupported, expired or removed.
+  - Idempotent by content hash, with duplicate detection.
+  - Per-stage history and cost in `knowledge_jobs`, with retries and backoff.
+  - Manual reprocess and administrator rebuild.
+  - Password-protected PDF and Office files are reported as unsupported rather than guessed at.
+- **Grounded extraction.** Key points, decisions, action items, dates, risks and obligations must each carry a quote that appears verbatim in the source text; anything else is dropped and the drop is reported. Human corrections are kept in `artifact_versions` next to the machine version. Decisions, action items, relationships and tags become `knowledge_suggestions` that a person approves; approval creates the record through its module.
+- **Query-time permissions.**
+  - Search, autocomplete, facets and related items are computed over `visibleSources`. That uses the Work Graph node check, with a direct file, page and work-record check for items not yet projected.
+  - Counts and facets only include permitted results.
+  - Natural-language questions fall back to ranked any-term matching (stop words removed).
+  - AI answers are built only from the asker's visible results. Citations are re-checked for each reader.
+- **Freshness** (`knowledge.sweep`) creates owner-assigned reviews for items that are due for review, expiring or expired, stale policies, unverified AI content, broken links and conflicts. Each review also appears in the owner's inbox.
+- **Decision Register.** Decisions are Work records (Proposed → Under review → Approved/Rejected → Implemented/Superseded/Expired). The dossier answers why the decision was made, who approved it, what evidence supported it, which work it affected, whether it was implemented and whether it was later changed.
+- **Questions** carry the labels Verified answer, AI-generated answer, Expert answer or Unanswered. They support accept, verify, escalate, feedback, correction requests and conversion to a draft article.
+
+### Integration with the Work Graph, Studio, AI and connectors
+
+- **Work Graph:** node types request, service delivery and outcome review; strategy kinds; relationships `requested_by` and `superseded_by`; files linked to work records.
+- **Studio:** actions `create_request` and `record_progress`. Triggers: `request_submitted`, `lifecycle_stage_changed`, `key_result_updated`, `decision_approved`, `knowledge_review_due` and `inbox_escalated`. A failed automation creates an inbox item.
+- **Agent tools:**
+  - read tools: `inbox_summary`, `trace_record`, `analyze_objective`, `search_company_knowledge`, `detect_stale_knowledge`;
+  - approval-gated mutations: `draft_decision`, `draft_check_in`;
+  - connector tools require the connector's `allowAgents` policy.
+- **Widgets:** requests, objectives, decisions and knowledge reviews.
+- **Connectors:** synced records can be marked for action (they enter the person's inbox) and can feed key results.
+
 ## Permission, tenant and audit model
 
 1. Resolve the session to one active company membership or a live Platform Owner support session on the server.
@@ -80,6 +191,10 @@ These rules are the design contract, not proof that every current route satisfie
 | Workspace Studio | Forward migration/schema, declarative definition validator, tenant-scoped app lifecycle, initial metadata-backed record API and basic published table/form UI | Typecheck/build; SaaS E2E covers app/record tenant isolation, required-field checks, own-scope filtering, hidden fields, immutable publish, draft edit and rollback-as-new-version | DB-enforced unique constraints, richer form and record editing UX, file/relationship/repeating fields, preview/test execution, dashboards, workflow/approvals/automation engines, natural-language workflow authoring, connector binding |
 | Governed AI workforce | ONE/provider layer and agent API/UI, immutable versions, identity-bound read-only runner, citations and kill switch | Browser page renders; SaaS E2E passed agent test covering tenant/private visibility, requester identity, read-only behavior, immutable version and kill-switch | Approval-gated actions, tool gateway, evaluations, event-triggered execution, Control Tower |
 | Connector fabric | Connector management, encrypted secrets, selected providers, webhooks/MCP and persisted requester-bound action confirmation | Typecheck/build and mock SaaS E2E cover proposal sealing, exact UI review, cancellation and replay refusal; no live tenant provider verification | Explicit three-mode manifest/runtime, ACL/deletion-aware sync, federated retrieval, external result verification/recovery and reference-provider limits |
+| Universal Work Inbox | Source adapters, projection, delegation, SLA/escalation/digest sweep, source-module actions with version check, AI ranking (no actions) | `tests/ops.test.mjs` scenarios 1–5; browser run | Per-user notification channel preferences beyond email/in-app; very large inboxes use offset paging |
+| Request-to-Outcome lifecycle and financial ledger | Templates, stage engine, approval gates, business case, partial conversion, change orders, invoices/three-way match, receipts with asset details, services, benefits, outcome reviews, trace and asset lineage; immutable ledger | ops scenarios 6–14; collaboration finance figures unchanged; browser run | Payments are recorded, not executed; no multi-currency conversion (figures are per currency) |
+| Goals-to-Execution | Strategy hierarchy, extended visibility, explained rollups, KR data sources with lineage, check-ins (AI drafts cited), review packs, portfolio, capacity, scenarios | ops scenarios 15–18; browser run | Connector KR values need an agreed numeric resource per provider |
+| Company Knowledge Intelligence | Pipeline with job history and cost, grounded extraction, query-time permission search/facets/autocomplete, freshness reviews, Decision Register, questions and cited answers, taxonomy and retention | ops scenarios 19–27; browser run | OCR/transcription quality depends on the configured provider; semantic ranking needs an embedding provider (keyword search otherwise) |
 
 ## Migration and operations strategy
 
@@ -90,6 +205,25 @@ These rules are the design contract, not proof that every current route satisfie
 - Required checks: `npm run typecheck`, `npm run lint`, `npm run test:unit`, `npm run build`, and `npm run test:e2e` against an isolated test database plus local mock services. Browser verification must exercise at least one real path per foundation and a negative cross-tenant/permission case.
 
 ## Known limitations and next phases
+
+Capabilities 5–8 (verified 2026-09-28):
+
+- **Scheduling.** Sweeps (inbox SLA/digest, strategy key-result sync and check-in reminders, knowledge freshness and retention) are hourly keyed jobs. Requests enqueue them, and each job re-schedules itself. No Worker Cron trigger is configured, so an idle company is swept on its next request; adding a Cron trigger is a deployment change.
+- **Money.** Payments are recorded against invoices; nothing is transferred. Ledger figures are per currency, with no FX conversion. Invoice matching is at document level (ordered/received/invoiced totals within the tolerance), not per line.
+- **Semantic search** needs an embedding provider. Without one, search is keyword-based (the item is noted, not marked partial). OCR and transcription quality depend on the configured provider.
+- **Connector key results** need a numeric value from the connector record's metadata; there is no per-provider metric mapping yet.
+- **Local dev sign-out.** After `POST /api/auth/logout` the local wrangler/workerd dev server stops answering. This reproduces on the previous commit too, so it is not a regression from this work; tracked separately.
+- **Runtime fixes made during browser verification:**
+  - the decision dossier attributed records reached through a person;
+  - strategy child rows showed stale stored progress;
+  - search excerpts were lower-cased;
+  - work-record text included raw record ids;
+  - question labels ignored answers;
+  - a missing embedding provider marked every item "partial".
+
+  All are fixed and re-tested.
+
+Earlier foundations:
 
 1. Complete and independently acknowledge graph/event consumers; add domain event producers for each source mutation and tests for retries, duplicate delivery, and stale-worker recovery.
 2. Extend Workspace Studio's initial secure record API into DB-enforced constraints, full form authoring, preview/test execution, approval engine, workflow/automation executor, and complete record editing UI.

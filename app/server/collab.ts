@@ -53,31 +53,15 @@ export async function workflowFor(p:{tenant_id:string,workflow_id:string|null,ty
 }
 // Project finance from real linked records only. Nothing is estimated here.
 export async function projectFinance(tenantId:string,p:ProjectRow){
- const [docs,lines,costs,budgets,time]=await Promise.all([
-  all<{id:string,kind:string,number:string,title:string,status:string,total:number,pr_id:string|null}>('SELECT id,kind,number,title,status,total,pr_id FROM purchase_docs WHERE tenant_id=? AND project_id=?',tenantId,p.id),
-  all<{kind:string,status:string,qty:number,received_qty:number,returned_qty:number,unit_price:number,tax_rate:number}>('SELECT d.kind,d.status,l.qty,l.received_qty,l.returned_qty,l.unit_price,l.tax_rate FROM purchase_lines l JOIN purchase_docs d ON d.id=l.doc_id AND d.tenant_id=l.tenant_id WHERE l.tenant_id=? AND d.project_id=?',tenantId,p.id),
-  all<{kind:string,amount:number,status:string}>('SELECT kind,amount,status FROM project_costs WHERE tenant_id=? AND project_id=?',tenantId,p.id),
-  all<{id:string,name:string,amount:number}>('SELECT id,name,amount FROM budgets WHERE tenant_id=? AND project_id=?',tenantId,p.id),
-  first<{cost:number,minutes:number}>('SELECT coalesce(sum(minutes*rate/60.0),0) AS cost,coalesce(sum(minutes),0) AS minutes FROM time_entries WHERE tenant_id=? AND project_id=?',tenantId,p.id),
- ]);
- const dead=['Draft','Rejected','Cancelled'];
- const prs=docs.filter(d=>d.kind==='PR'&&!dead.includes(d.status));const pos=docs.filter(d=>d.kind==='PO'&&!dead.includes(d.status));
- const converted=new Set(pos.map(p=>p.pr_id).filter(Boolean));
- const requested=prs.reduce((n,d)=>n+d.total,0);
- const ordered=pos.reduce((n,d)=>n+d.total,0);
- // Committed: approved requisitions not yet ordered, plus open (not fully received) purchase orders.
- const openPrs=prs.filter(d=>d.status==='Approved'&&!converted.has(d.id)).reduce((n,d)=>n+d.total,0);
- const received=lines.filter(l=>l.kind==='PO').reduce((n,l)=>n+Math.max(0,l.received_qty-l.returned_qty)*l.unit_price*(1+l.tax_rate/100),0);
- const committed=openPrs+Math.max(0,ordered-received);
- const invoices=costs.filter(c=>c.kind==='invoice').reduce((n,c)=>n+c.amount,0),payments=costs.filter(c=>c.kind==='payment').reduce((n,c)=>n+c.amount,0);
- const expenses=costs.filter(c=>c.kind==='expense').reduce((n,c)=>n+c.amount,0),forecastExtra=costs.filter(c=>c.kind==='forecast').reduce((n,c)=>n+c.amount,0);
- const labour=time?.cost||0;
- // Actual: received goods and services (or invoiced, whichever is higher), plus expenses and logged labour.
- const actual=Math.max(received,invoices)+expenses+labour;
- const approved=p.approved_budget||budgets.reduce((n,b)=>n+b.amount,0);
- const forecast=actual+committed+forecastExtra;
- const r=(n:number)=>Math.round(n*100)/100;
- return {currency:p.currency,approved:r(approved),requested:r(requested),committed:r(committed),ordered:r(ordered),received:r(received),invoiced:r(invoices),paid:r(payments),labour:r(labour),labourMinutes:time?.minutes||0,expenses:r(expenses),actual:r(actual),remaining:r(approved-actual-committed),forecastAtCompletion:r(forecast),variance:r(approved-forecast),documents:docs,budgets};
+ // Totals come from the immutable financial ledger (app/server/finance.ts); linked documents are reconciled
+ // first so the ledger always reflects their current state, and each record is counted once per measure.
+ const fin=await import('./finance');
+ const docs=await all<{id:string,kind:string,number:string,title:string,status:string,total:number,pr_id:string|null}>('SELECT id,kind,number,title,status,total,pr_id FROM purchase_docs WHERE tenant_id=? AND project_id=?',tenantId,p.id);
+ const budgets=await all<{id:string,name:string,amount:number}>('SELECT id,name,amount FROM budgets WHERE tenant_id=? AND project_id=?',tenantId,p.id);
+ for(const d of docs)await fin.reconcileDoc(tenantId,d.id);for(const b of budgets)await fin.reconcileBudget(tenantId,b.id);
+ for(const c of await all<{id:string}>('SELECT id FROM project_costs WHERE tenant_id=? AND project_id=?',tenantId,p.id))await fin.reconcileProjectCost(tenantId,c.id);
+ const s=(await fin.financeSummary(tenantId,{projectId:p.id},{approvedOverride:p.approved_budget||null}))!;
+ return {currency:p.currency,approved:s.budget,requested:s.requested,committed:s.committed,ordered:s.ordered,received:s.received,invoiced:s.invoiced,paid:s.paid,labour:s.labour,labourMinutes:s.labourMinutes,expenses:s.expenses,actual:s.actual,remaining:s.remaining,forecastAtCompletion:s.forecast,variance:s.variance,documents:docs,budgets,method:s.method};
 }
 
 // ── Tasks ───────────────────────────────────────────────────────────────────
@@ -127,10 +111,11 @@ export async function canAccessChannel(u:Member,c:ChannelRow,explicit?:Set<strin
 export function canModerateChannel(u:Member,c:ChannelRow){return u.role==='admin'||(c.kind==='department'&&hasAction(u,'messages','moderate')&&canActOn(u,'messages','moderate',c.ref_id,null))||(['custom','project','space','group'].includes(c.kind)&&c.created_by===u.id)}
 
 // ── Links between files/messages and other records ─────────────────────────
-export const LINK_TYPES=['space','department','project','task','ticket','asset','PR','PO','vendor','person','message','page','work_order'] as const;
+export const LINK_TYPES=['space','department','project','task','ticket','asset','PR','PO','vendor','person','message','page','work_order','work_record'] as const;
 export async function entityVisible(u:Member,type:string,id:string){
  switch(type){
   case 'ticket':case 'asset':case 'PR':case 'PO':case 'page':case 'work_order':return visibleEntity(u,type,id);
+  case 'work_record':{const {loadWork}=await import('./work');return loadWork(u,id)}
   case 'space':return loadSpace(u,id);
   case 'project':return loadProject(u,id);
   case 'task':return loadTask(u,id);

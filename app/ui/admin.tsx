@@ -1,5 +1,7 @@
 'use client';
 import {ControlTower} from './agents';
+import {KnowledgeAdmin} from './knowledge';
+import {InboxRules} from './inbox';
 import {Fragment,useEffect,useMemo,useState} from 'react';
 import {api,useApi,go,dateOnly,cx,PREVIEW_KEY} from './lib';
 import {TagPicker,useApp,Btn,Chip,Header,Grid,Modal,Field,DeptSelect,PersonSelect,Who,ErrorNote,Skeleton,Empty,Card,Icon,Note,Stat,Tabs,type Col} from './kit';
@@ -14,6 +16,8 @@ export default function Admin({parts}:{parts:string[]}){
  const {s,can}=useApp();const admin=s.user.role==='admin';
  const view=parts[0]||(admin?'company':'activity');
  if(view==='roles'&&admin)return <Roles openId={parts[1]}/>;
+ if(view==='knowledge'&&admin)return <KnowledgeAdmin tab={parts[1]||'sources'}/>;
+ if(view==='inbox-rules'&&admin)return <div className="page"><InboxRules/></div>;
  if(view==='overrides'&&admin)return <Overrides/>;
  if(view==='data'&&can('company-data'))return <DataHub/>;
  if(view==='activity'&&can('audit'))return <Activity/>;

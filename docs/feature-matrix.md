@@ -4,6 +4,52 @@ Status key: **Working** (existed before and still works) · **New** (implemented
 
 "Verified" names how it was checked: **E2E** = automated acceptance test (`npm run test:e2e`), **Unit** = permission unit test (`npm run test:unit`), **Manual** = exercised in the browser against the built Worker, **API** = called directly during development.
 
+## Capabilities 5–8: Inbox, Request-to-Outcome, Goals-to-Execution, Knowledge Intelligence (migration 0016, 2026-09-28)
+
+Verification for this section:
+
+- **E2E**: `tests/ops.test.mjs`, 21/21, run with the full suite: platform 12/12, SaaS 24/24, collaboration 20/20, operating system 24/24.
+- **Migration**: 0016 was applied to a copy of the development database; row counts were unchanged.
+- **Manual**: built Worker with demo data, in the browser pane.
+
+| Requirement | Status | Verified | Notes |
+|---|---|---|---|
+| Inbox: approvals, tasks, tickets, mentions, messages, PR/PO, project stages, overdue, connector alerts, emails marked for action, AI approvals, acknowledgements, lifecycle stages, reviews, questions, suggestions | New | E2E 1, Manual | Projection from source adapters; items close when their source no longer needs the person |
+| Inbox views: My attention, all, approvals, tasks, assigned, mentions, messages, alerts, overdue, today, week, high, financial, delegated, snoozed, completed; team and department inboxes; saved views | New | E2E 1, Manual | Filters, search, sort (rules / due / AI), grouping, columns, bulk actions, keyboard j/k/Enter/x/e/u/s// |
+| Inbox actions through the source module (approve, reject, request changes, complete, acknowledge, assign, delegate, escalate, comment/reply, follow-up task, retry) | New | E2E 2, Manual | Optimistic version check (409 on a stale item); re-projected afterwards; audited |
+| Read, unread, snooze, remind and dismiss (informational only) | New | E2E 2 | Personal state, never changes the source |
+| Unauthorised items never in results or counts; cross-company ids | New | E2E 3, 27 | Read-time source re-check |
+| Delegation (dates, module/type/record scope, no chains/circles, policy, on-behalf-of audit, cannot self-approve) | New | E2E 4 | Out-of-office flag; administrators can set cover for others |
+| SLA escalation, reminders, digest, retention, inbox rules | New | API (sweep job), Manual (Admin → Inbox rules) | Hourly sweep job; platform defaults in Platform → Operating system |
+| AI prioritisation and drafts, with evidence and no actions | New | E2E 5, Manual | Invented ids dropped; "nothing was approved, sent or changed" |
+| Business requests with 8 configurable, versioned lifecycle templates | New | E2E 6, Manual | Templates editable in Requests → Templates; in-flight requests keep their version |
+| Approval gates (any/all/quorum, conditions, finance threshold, request changes, reject, delegation) | New | E2E 7, Manual | Requester can never approve |
+| Business case with formulas and missing-data list (no invented figures) | New | Manual | ROI / payback only when both costs and annual benefit exist |
+| Project, budget and requisition created from a request through their modules | New | E2E 8 | |
+| Immutable financial ledger; no double counting; figure drill-down | New | E2E 9 (UPDATE/DELETE refused) | Collaboration project-finance figures unchanged |
+| Partial conversion to several POs; partial receipts | New | E2E 10 | Over-ordering refused |
+| Receipt creates stock or assets with serial, custodian, location, warranty and maintenance plan | New | E2E 11, Manual | |
+| Asset lineage with replacement recommendation | New | E2E 12, Manual | Assets → Lineage tab |
+| Change orders (increases re-approved), invoices with three-way match, exception approval, payment recording | New | E2E 8–12 (exceptions), Manual | Payments are recorded, not executed |
+| Service delivery: start, deliver (SLA measured), accept with rating/quality, reject, close/renew/terminate, milestones | New | E2E 13 | |
+| Benefits, measurements and outcome reviews (expected vs actual, ledger result, follow-up tasks, key-result lineage) | New | E2E 14 | |
+| Traceability page from any record | New | E2E 8, Manual | Hidden records are counted, never shown |
+| Strategy hierarchy: strategy → theme/goal → objective → key result → initiative → programme → project → milestone → task | New | E2E 15, Manual | Multi-parent; publication, acknowledgement and versions |
+| Rollups with method, sources, weights, missing data, override and reason, confidence, health basis | New | E2E 16, Manual | |
+| Key-result values from manual, project, purchasing, asset, report, Studio and connector sources with lineage; AI recommendations as drafts | New | E2E 16 (manual lineage), API | |
+| Private, leadership, group, confidential and partner goals hidden from others, search, graph and AI | New | E2E 17 | |
+| Check-ins (AI drafts cite evidence, stay drafts), review packs, portfolio views, capacity (privacy-aware) | New | E2E 15–16, Manual | |
+| Planning scenarios: private → submitted → approved by another planner → applied through modules | New | E2E 18, Manual | Evaluation never changes live records |
+| Knowledge pipeline with states, job history, cost, retries, reprocess, rebuild, duplicates, unsupported encrypted files | New | E2E 19, Manual | Admin → Knowledge |
+| Grounded extraction (verbatim quotes only), summaries, entities, topics, tags; human corrections kept | New | E2E 19 | Ungrounded AI items dropped and reported |
+| Audio/video transcription and summary where a provider supports it | New | E2E 20 | Mock Whisper in tests |
+| Query-time permission search, facets, autocomplete, related; AI answers and graph never leak | New | E2E 21–23, Manual | Natural-language questions use ranked any-term fallback |
+| Decision Register and dossier (why, who approved, evidence, affected work, implemented, later changed) | New | E2E 24, Manual | AI-suggested decisions and actions need approval |
+| Freshness reviews assigned to owners and shown in their inbox | New | E2E 25 | |
+| Questions with AI (cited), expert and verified answers; accept, verify, escalate, feedback, correction, convert to article | New | E2E 26, Manual | Citations to sources the reader cannot open are removed |
+| Taxonomy (topics, terms, acronyms, synonyms…) with approval; retention classes | New | Manual | Admin → Knowledge → Taxonomy / Retention |
+| Cross-company access fails securely | New | E2E 27 | Forged tenant ids in bodies are ignored |
+
 ## Four connected company-operating-system foundations (audit 2026-09-27)
 
 This section uses the requested status vocabulary. “Newly implemented” means code was added in this pass; it is not marked verified until the named automated and runtime checks pass. Existing functionality elsewhere in this older matrix is not proof of the new acceptance scenarios below.

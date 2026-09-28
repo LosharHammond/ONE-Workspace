@@ -198,7 +198,7 @@ test('14. A consequential AI action waits for human approval',async()=>{
  const r=ok(await S.staff.post('/api/agents',{action:'run',id:S.agent,page:'requests',input:'TOOL:create_purchase_request {"title":"Agent-drafted cables","justification":"Site wiring","lines":[{"description":"Cable","qty":10,"unitPrice":50}]}'}));
  assert.equal(r.status,'waiting_approval');assert.equal(r.approvals.length,1);
  assert.equal(sql(`SELECT count(*) AS n FROM purchase_docs WHERE tenant_id='${E.id}' AND title='Agent-drafted cables'`)[0].n,0,'nothing is created before approval');
- const inbox=ok(await E.admin.get('/api/inbox'));assert.ok(inbox.approvals.some(i=>i.id===`ai:${r.approvals[0].id}`),'the approval is in the universal inbox');
+ let inInbox=false;for(let i=0;i<20&&!inInbox;i++){const inbox=ok(await E.admin.get('/api/inbox?view=approvals'));inInbox=inbox.items.some(x=>x.sourceType==='ai_approval'&&x.sourceId===r.approvals[0].id);if(!inInbox)await new Promise(x=>setTimeout(x,500))}assert.ok(inInbox,'the approval is in the universal inbox');
  const done=await E.admin.post('/api/agents',{action:'approve',approvalId:r.approvals[0].id});assert.equal(done.status,200,JSON.stringify(done.data));
  const pr=sql(`SELECT status FROM purchase_docs WHERE tenant_id='${E.id}' AND title='Agent-drafted cables'`);assert.equal(pr.length,1);assert.equal(pr[0].status,'Draft','created as a draft, never submitted by the agent');
 });
